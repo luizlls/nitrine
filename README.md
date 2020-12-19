@@ -6,7 +6,7 @@
 
 ## STATUS
 
-- [ ] AST
+- [X] AST
 - [ ] Lexer
 - [ ] Parser
 - [ ] IR
