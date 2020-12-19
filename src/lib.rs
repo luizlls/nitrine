@@ -5,6 +5,7 @@
 
 pub mod ast;
 pub mod token;
+pub mod lexer;
 
 use std::{ops::Range, path::PathBuf};
 
