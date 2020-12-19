@@ -4,6 +4,7 @@
 #![macro_use]
 
 pub mod ast;
+pub mod token;
 
 use std::{ops::Range, path::PathBuf};
 
