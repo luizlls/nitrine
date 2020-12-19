@@ -8,10 +8,11 @@
 
 - [X] AST
 - [X] Lexer
-- [ ] Parser
-- [ ] IR
-- [ ] VM
-- [ ] WebAssembly?
+- [X] Parser
+- [ ] IR?
+- [ ] WASM?
+- [ ] JavaScript
+- [ ] VM?
 
 
 &nbsp;
