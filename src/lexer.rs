@@ -3,8 +3,14 @@ use std::str::Chars;
 use crate::token::{self, Token, TokenKind, TokenKindError};
 use crate::Span;
 
-pub const SYMBOLS: &str = ".%^&|:=~+-*<>!?/";
+pub const SYMBOLS: &str = "=.+-<>*/%^&|~:!?";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LexerMode {
+    Regular,
+
+    Template,
+}
 
 #[derive(Debug, Clone)]
 pub struct Lexer<'src> {
@@ -12,9 +18,10 @@ pub struct Lexer<'src> {
     chars: Chars<'src>,
     curr: Option<char>,
     peek: Option<char>,
-    byte_start: u32,
-    byte_offset: u32,
+    start: u32,
+    offset: u32,
     line: u32,
+    mode: LexerMode,
 }
 
 impl<'src> Lexer<'src> {
@@ -24,60 +31,59 @@ impl<'src> Lexer<'src> {
             chars: src.chars(),
             curr: None,
             peek: None,
-            byte_start: 0,
-            byte_offset: 0,
+            start: 0,
+            offset: 0,
             line: 1,
+            mode: LexerMode::Regular
         };
-        lexer.bump(0);
-        lexer.bump(0);
+        lexer.bump();
+        lexer.bump();
+        lexer.offset = 0;
 
         lexer
     }
 
     fn advance(&mut self) {
-        self.byte_start = self.byte_offset;
+        self.start = self.offset;
     }
 
-    fn bump(&mut self, n: u32) {
+    fn bump(&mut self) {
+        let length = self.curr.map(char::len_utf8).unwrap_or(0) as u32;
+        self.offset += length;
         self.curr = self.peek;
         self.peek = self.chars.next();
-        self.byte_offset += n;
-    }
-
-    fn bump_length(&mut self) {
-        self.bump(self.curr.map(char::len_utf8).unwrap_or(0) as u32);
     }
 
     fn line(&mut self) {
         self.line += 1;
-        self.bump(1);
+        self.bump();
     }
 
     fn span(&self) -> Span {
-        Span::new(self.line, self.byte_start, self.byte_offset)
+        Span::new(self.line, self.start, self.offset)
     }
 
     fn value(&self) -> &str {
-        &self.src[(self.byte_start as usize) .. (self.byte_offset as usize)]
+        &self.src[(self.start as usize) .. (self.offset as usize)]
     }
 
-    fn next_tokenkind(&mut self) -> Option<TokenKind> {
+    fn next_kind(&mut self) -> Option<TokenKind> {
         loop {
             self.advance();
 
             let kind = match self.curr {
-                Some('(') => self.single(TokenKind::OpenParen),
-                Some(')') => self.single(TokenKind::CloseParen),
-                Some('{') => self.single(TokenKind::OpenBrace),
-                Some('}') => self.single(TokenKind::CloseBrace),
-                Some('[') => self.single(TokenKind::OpenBracket),
-                Some(']') => self.single(TokenKind::CloseBracket),
+                Some('(') => self.single(TokenKind::OpeningParen),
+                Some(')') => self.single(TokenKind::ClosingParen),
+                Some('{') => self.single(TokenKind::OpeningBrace),
+                Some('}') => self.single(TokenKind::ClosingBrace),
+                Some('[') => self.single(TokenKind::OpeningBracket),
+                Some(']') => self.single(TokenKind::ClosingBracket),
                 Some(',') => self.single(TokenKind::Comma),
                 Some(';') => self.single(TokenKind::Semi),
                 Some(' ')
               | Some('\t')
               | Some('\r') => {
-                    self.bump(1);
+                    self.bump();
                     continue;
                 }
                 Some('\n') => {
@@ -116,13 +122,60 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    fn string(&mut self) -> TokenKind {
+        let open = self.curr.unwrap();
+
+        self.bump();
+
+        loop {
+            match self.curr {
+                Some('\\') => {
+                    self.bump();
+                    match self.curr {
+                        Some('n') | Some('r')
+                      | Some('t') | Some('v')
+                      | Some('a') | Some('b')
+                      | Some('"') | Some('0')
+                      | Some('\\') => {
+                            self.bump();
+                        }
+                        Some('u') => {
+                            todo!("Validate unicode escape")
+                        }
+                        Some('x') => {
+                            todo!("Validate binary escape")
+                        }
+                        _ => {
+                            return TokenKind::Error(TokenKindError::InvalidEscape)
+                        }
+                    }
+                }
+                Some('\n') |
+                None => {
+                    return TokenKind::Error(TokenKindError::UnterminatedString)
+                }
+                Some(chr) => {
+                    if chr == open {
+                        break;
+                    } else {
+                        self.bump();
+                    }
+                }
+            }
+        }
+
+        self.bump();
+
+        TokenKind::String
+    }
+
     fn single(&mut self, token: TokenKind) -> Option<TokenKind> {
-        self.bump(1);
+        self.bump();
         Some(token)
     }
 
     fn is_alpha(&self, chr: Option<char>) -> bool {
-        matches!(chr, Some('a'..='z') | Some('_') | Some('A'..='Z') | Some('0'..='9'))
+        matches!(chr, Some('a'..='z') | Some('A'..='Z') | Some('_') | Some('0'..='9'))
     }
 
     fn is_number(&self, chr: Option<char>) -> bool {
@@ -130,13 +183,15 @@ impl<'src> Lexer<'src> {
     }
 
     fn is_symbol(&self, chr: Option<char>) -> bool {
-        match chr {
-            Some(chr) => SYMBOLS.contains(chr), _ => false,
+        if let Some(chr) = chr {
+            SYMBOLS.contains(chr)
+        } else {
+            false
         }
     }
 
     fn lower(&mut self) -> TokenKind {
-        while self.is_alpha(self.curr) { self.bump_length(); }
+        while self.is_alpha(self.curr) { self.bump(); }
 
         if let Some(keyword) = token::get_keyword(self.value()) {
             keyword
@@ -146,12 +201,12 @@ impl<'src> Lexer<'src> {
     }
 
     fn upper(&mut self) -> TokenKind {
-        while self.is_alpha(self.curr) { self.bump_length(); }
+        while self.is_alpha(self.curr) { self.bump(); }
         TokenKind::Upper
     }
 
     fn operator(&mut self) -> TokenKind {
-        while self.is_symbol(self.curr) { self.bump_length(); }
+        while self.is_symbol(self.curr) { self.bump(); }
 
         if let Some(operator) = token::get_operator(self.value()) {
             operator
@@ -164,45 +219,15 @@ impl<'src> Lexer<'src> {
         let mut float = false;
 
         while self.is_number(self.curr) {
-            self.bump(1);
+            self.bump();
 
             if self.curr == Some('.') && !float {
                 float = true;
-                self.bump(1);
+                self.bump();
             }
         }
 
-        if float {
-            TokenKind::Float
-        } else {
-            TokenKind::Integer
-        }
-    }
-
-    fn string(&mut self) -> TokenKind {
-        self.bump(1);
-
-        loop {
-            match self.curr {
-                Some('\\') => {
-                    self.bump(1);
-                }
-                Some('"') => {
-                    break;
-                }
-                Some('\n') |
-                None => {
-                    return TokenKind::Error(TokenKindError::UnterminatedString);
-                }
-                _ => {}
-            }
-
-            self.bump_length();
-        }
-
-        self.bump(1);
-
-        TokenKind::String
+        TokenKind::Number
     }
 
     fn comment(&mut self) {
@@ -214,8 +239,12 @@ impl<'src> Lexer<'src> {
                 }
                 _ => {}
             }
-            self.bump_length();
+            self.bump();
         }
+    }
+
+    pub fn set_mode(&mut self, mode: LexerMode) {
+        self.mode = mode;
     }
 }
 
@@ -223,7 +252,7 @@ impl Iterator for Lexer<'_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
-        self.next_tokenkind().map(|kind| Token { kind, span: self.span() })
+        self.next_kind().map(|kind| Token { kind, span: self.span() })
     }
 }
 
@@ -260,7 +289,7 @@ mod tests {
     fn lexer_integer() {
         let mut lexer = Lexer::new("42");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Integer);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Number);
         assert_eq!(lexer.value(), "42");
     }
 
@@ -268,7 +297,7 @@ mod tests {
     fn lex_float() {
         let mut lexer = Lexer::new("3.14519");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Float);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Number);
         assert_eq!(lexer.value(), "3.14519");
     }
 

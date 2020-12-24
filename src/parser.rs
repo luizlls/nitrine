@@ -1,7 +1,7 @@
 use crate::{Source, Span};
 use crate::ast::*;
-use crate::token::{Token, TokenKind, Associativity};
-use crate::lexer::Lexer;
+use crate::token::{Token, TokenKind, TokenKindError, Associativity};
+use crate::lexer::{Lexer};
 use crate::error::{Result, NitrineError};
 
 pub struct Parser<'s> {
@@ -37,11 +37,11 @@ impl<'s> Parser<'s> {
 
         let name = self.name()?;
 
-        let parameters = if self.matches(TokenKind::OpenParen) {
-            self.eat(TokenKind::OpenParen)?;
-            let parameters = self.sequence_of(Self::name, TokenKind::Comma,TokenKind::CloseParen)?;
-            self.eat(TokenKind::CloseParen)?;
-            parameters
+        let parameters = if self.matches(TokenKind::OpeningParen) {
+            self.block_of(
+                TokenKind::OpeningParen,
+                TokenKind::ClosingParen,
+                Self::name)?
         } else {
             vec![]
         };
@@ -57,9 +57,7 @@ impl<'s> Parser<'s> {
 
     fn name(&mut self) -> Result<Name> {
         let Token { span, .. } = self.eat(TokenKind::Lower)?;
-
         let name = self.source.content[span.range()].into();
-
         Ok(Name { name, span })
     }
 
@@ -83,7 +81,7 @@ impl<'s> Parser<'s> {
     fn term(&mut self) -> Result<Expr> {
         let term = match self.token.kind {
             TokenKind::Lower => {
-                if self.peek_is(TokenKind::OpenBrace) {
+                if self.peek_is(TokenKind::OpeningBrace) {
                     self.object()?
                 } else {
                     let span = self.span();
@@ -94,26 +92,26 @@ impl<'s> Parser<'s> {
             TokenKind::Upper => {
                 self.symbol()?
             }
-            TokenKind::String
-          | TokenKind::Float
-          | TokenKind::Integer => {
-                self.literal()?
+            TokenKind::Number => {
+                self.number()?
             }
-            TokenKind::OpenParen => {
+            TokenKind::String => {
+                self.string()?
+            }
+            TokenKind::OpeningParen => {
                 self.parens()?
             }
-            TokenKind::OpenBrace => {
+            TokenKind::OpeningBrace => {
                 self.object()?
             }
-            TokenKind::OpenBracket => {
+            TokenKind::OpeningBracket => {
                 self.list()?
             }
             tk if tk.is_prefix() => {
                 self.unary()?
             }
             _ => {
-                let Token { kind, span } = self.token;
-                return Err(NitrineError::error(span, format!("Unexpected `{}`", kind)))
+                return Err(self.handle_unexpected())
             }
         };
 
@@ -129,28 +127,26 @@ impl<'s> Parser<'s> {
           | ExprKind::Block { .. } => true,
             _ => false
         };
-        let valid = valid && self.matches(TokenKind::OpenParen);
-        let valid = valid && self.same_line(self.prev.span.line);
 
         if !valid {
             return Ok(fun);
         }
 
-        let mut fun = fun;
+        let mut expr = fun;
 
         loop {
-            self.eat(TokenKind::OpenParen)?;
-            let args = self.sequence_of(Self::expr, TokenKind::Comma, TokenKind::CloseParen)?;
-            self.eat(TokenKind::CloseParen)?;
-
-            fun = self.make(ExprKind::Apply { function: box fun, args }, span)?;
-
-            if !self.matches(TokenKind::OpenParen) || self.same_line(self.prev.span.line) {
+            if self.matches(TokenKind::OpeningParen) && self.same_line(self.prev.span.line) {
+                let args = self.block_of(
+                    TokenKind::OpeningParen,
+                    TokenKind::ClosingParen,
+                    Self::expr)?;
+                expr = self.make(ExprKind::Apply { function: box expr, args }, span)?;
+            } else {
                 break;
             }
         }
 
-        Ok(fun)
+        Ok(expr)
     }
 
     fn symbol(&mut self) -> Result<Expr> {
@@ -161,12 +157,11 @@ impl<'s> Parser<'s> {
         let value = match self.token.kind {
             TokenKind::Lower
           | TokenKind::Upper
-          | TokenKind::String
-          | TokenKind::Float
-          | TokenKind::Integer
-          | TokenKind::OpenParen
-          | TokenKind::OpenBrace
-          | TokenKind::OpenBracket if self.same_line(span.line) => {
+          | TokenKind::OpeningParen
+          | TokenKind::OpeningBrace
+          | TokenKind::OpeningBracket
+          | TokenKind::Number
+          | TokenKind::String if self.same_line(span.line) => {
                 Some(box self.term()?)
             }
             _ => None
@@ -175,31 +170,36 @@ impl<'s> Parser<'s> {
         self.make(ExprKind::Symbol { name, value }, span)
     }
 
-    fn literal(&mut self) -> Result<Expr> {
-        let span = self.span();
+    fn number(&mut self) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::Number)?;
 
-        let value = self.source.content[span.range()].into();
-
-        let kind = match self.token.kind {
-            TokenKind::String => ExprKind::String { value },
-            TokenKind::Float => ExprKind::Float { value },
-            TokenKind::Integer => ExprKind::Integer { value },
-            _ => {
-                unreachable!("Should only call `Parser#literal` when the token is a literal value")
-            }
+        let number = ExprKind::Number {
+            value: self.source.content[span.range()].into()
         };
 
-        self.bump();
+        self.make(number, span)
+    }
 
-        self.make(kind, span)
+    fn string(&mut self) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::String)?;
+
+        // trim quotes
+        let span = Span::new(span.line, span.start + 1, span.end - 1);
+
+        let string = ExprKind::String {
+            value: self.source.content[span.range()].into()
+        };
+
+        self.make(string, span)
     }
 
     fn list(&mut self) -> Result<Expr> {
         let span = self.span();
 
-        self.eat(TokenKind::OpenBracket)?;
-        let items = self.sequence_of(Self::expr, TokenKind::Comma, TokenKind::CloseBracket)?;
-        self.eat(TokenKind::CloseBracket)?;
+        let items = self.block_of(
+            TokenKind::OpeningBracket,
+            TokenKind::ClosingBracket,
+            Self::expr)?;
 
         self.make(ExprKind::List { items }, span)
     }
@@ -207,9 +207,10 @@ impl<'s> Parser<'s> {
     fn parens(&mut self) -> Result<Expr> {
         let span = self.span();
 
-        self.eat(TokenKind::OpenParen)?;
-        let items = self.sequence_of(Self::expr, TokenKind::Comma, TokenKind::CloseParen)?;
-        self.eat(TokenKind::CloseParen)?;
+        let items = self.block_of(
+            TokenKind::OpeningParen,
+            TokenKind::ClosingParen,
+            Self::expr)?;
 
         if items.len() == 1 {
             let inner = box items.into_iter().next().unwrap();
@@ -234,12 +235,12 @@ impl<'s> Parser<'s> {
                 "The base object and the opening brace `{` must be in the same line".into()));
         }
 
-        self.eat(TokenKind::OpenBrace)?;
+        self.eat(TokenKind::OpeningBrace)?;
 
         let mut props = vec![];
 
         loop {
-            if self.matches(TokenKind::CloseBrace) {
+            if self.matches(TokenKind::ClosingBrace) {
                 break;
             }
 
@@ -250,7 +251,7 @@ impl<'s> Parser<'s> {
             }
         }
 
-        self.eat(TokenKind::CloseBrace)?;
+        self.eat(TokenKind::ClosingBrace)?;
 
         self.make(ExprKind::Object { base, props }, span)
     }
@@ -339,6 +340,7 @@ impl<'s> Parser<'s> {
             TokenKind::Gt  => OperatorKind::Gt,
             TokenKind::Ge  => OperatorKind::Ge,
             TokenKind::Concat => OperatorKind::Concat,
+            TokenKind::Pipe   => OperatorKind::Pipe,
             TokenKind::BitAnd => OperatorKind::BitAnd,
             TokenKind::BitOr  => OperatorKind::BitOr,
             TokenKind::BitNot => OperatorKind::BitNot,
@@ -361,18 +363,18 @@ impl<'s> Parser<'s> {
         let span = self.span();
 
         self.eat(TokenKind::Do)?;
-        self.eat(TokenKind::OpenBrace)?;
+        self.eat(TokenKind::OpeningBrace)?;
 
         let mut items = vec![];
 
         loop {
-            if self.matches(TokenKind::CloseBrace) {
+            if self.matches(TokenKind::ClosingBrace) {
                 break;
             }
             items.push(self.expr()?);
         }
 
-        self.eat(TokenKind::CloseBrace)?;
+        self.eat(TokenKind::ClosingBrace)?;
 
         self.make(ExprKind::Block { items }, span)
     }
@@ -399,33 +401,38 @@ impl<'s> Parser<'s> {
     fn lambda(&mut self) -> Result<Expr> {
         let span = self.span();
 
-        self.eat(TokenKind::Fn)?;
-        let parameters = self.sequence_of(Self::name, TokenKind::Comma, TokenKind::Arrow)?;
-        self.eat(TokenKind::Arrow)?;
+        let parameters = self.block_of(
+            TokenKind::Fn,
+            TokenKind::Arrow,
+            Self::name)?;
 
         let body = box self.expr()?;
 
         self.make(ExprKind::Lambda { parameters, body }, span)
     }
 
-    fn sequence_of<T, F>(&mut self, mut f: F, split: TokenKind, after: TokenKind)
+    fn block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
         -> Result<Vec<T>>
     where
         F: FnMut(&mut Self) -> Result<T>,
     {
         let mut result = vec![];
 
+        self.eat(open)?;
+
         loop {
-            if self.matches(after) {
+            if self.matches(close) {
                 break;
             }
 
             result.push(f(self)?);
 
-            if !self.maybe_eat(split) {
+            if !self.maybe_eat(TokenKind::Comma) {
                 break;
             }
         }
+
+        self.eat(close)?;
 
         Ok(result)
     }
@@ -470,12 +477,10 @@ impl<'s> Parser<'s> {
         }
     }
 
-    #[inline(always)]
     fn matches(&self, kind: TokenKind) -> bool {
         self.token.kind == kind
     }
 
-    #[inline(always)]
     fn peek_is(&self, kind: TokenKind) -> bool {
         self.peek.kind == kind
     }
@@ -486,6 +491,28 @@ impl<'s> Parser<'s> {
 
     fn same_line(&self, line: u32) -> bool {
         self.span().line == line
+    }
+
+    fn handle_unexpected(&mut self) -> NitrineError {
+        let Token { kind, span } = self.token;
+
+        let msg = match kind {
+            TokenKind::Error(TokenKindError::InvalidCharacter) => {
+                "Invalid character".into()
+            }
+            TokenKind::Error(TokenKindError::InvalidEscape) => {
+                "Invalid escape character".into()
+            }
+            TokenKind::Error(TokenKindError::InvalidOperator) => {
+                "Invalid operator".into()
+            }
+            TokenKind::Error(TokenKindError::UnterminatedString) => {
+                "Unterminated string".into()
+            }
+            _ => format!("Unexpected `{}`", kind)
+        };
+
+        NitrineError::error(span, msg)
     }
 }
 

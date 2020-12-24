@@ -15,12 +15,12 @@ impl Token {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenKind {
     // symbols
-    OpenParen,
-    CloseParen,
-    OpenBrace,
-    CloseBrace,
-    OpenBracket,
-    CloseBracket,
+    OpeningParen,
+    ClosingParen,
+    OpeningBrace,
+    ClosingBrace,
+    OpeningBracket,
+    ClosingBracket,
     Semi,
     Comma,
     Dot,
@@ -63,9 +63,10 @@ pub enum TokenKind {
     // values
     Lower,
     Upper,
+    Number,
     String,
-    Integer,
-    Float,
+
+    // string template
 
     // others
     EOF,
@@ -79,6 +80,8 @@ pub enum TokenKindError {
     InvalidCharacter,
 
     InvalidOperator,
+
+    InvalidEscape,
 
     UnterminatedString,
 }
@@ -101,7 +104,6 @@ pub fn get_keyword(key: &str) -> Option<TokenKind> {
         _ => None,
     }
 }
-
 
 pub fn get_operator(key: &str) -> Option<TokenKind> {
     match key {
@@ -216,12 +218,12 @@ impl TokenKind {
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TokenKind::OpenParen => write!(f, "("),
-            TokenKind::CloseParen => write!(f, ")"),
-            TokenKind::OpenBrace => write!(f, "{{"),
-            TokenKind::CloseBrace => write!(f, "}}"),
-            TokenKind::OpenBracket => write!(f, "["),
-            TokenKind::CloseBracket => write!(f, "]"),
+            TokenKind::OpeningParen => write!(f, "("),
+            TokenKind::ClosingParen => write!(f, ")"),
+            TokenKind::OpeningBrace => write!(f, "{{"),
+            TokenKind::ClosingBrace => write!(f, "}}"),
+            TokenKind::OpeningBracket => write!(f, "["),
+            TokenKind::ClosingBracket => write!(f, "]"),
             TokenKind::Comma => write!(f, ","),
             TokenKind::Dot => write!(f, "."),
             TokenKind::Semi => write!(f, ";"),
@@ -256,9 +258,8 @@ impl fmt::Display for TokenKind {
             TokenKind::BitXor => write!(f, "^^^"),
             TokenKind::BitShr => write!(f, ">>>"),
             TokenKind::BitShl => write!(f, "<<<"),
+            TokenKind::Number => write!(f, "number"),
             TokenKind::String => write!(f, "string"),
-            TokenKind::Float => write!(f, "float"),
-            TokenKind::Integer => write!(f, "integer"),
             TokenKind::Lower => write!(f, "lowercase identifier"),
             TokenKind::Upper => write!(f, "uppercase identifier"),
             TokenKind::EOF => write!(f, "end of file"),

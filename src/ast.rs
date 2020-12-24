@@ -46,11 +46,9 @@ pub enum ExprKind {
 
     String { value: String },
 
-    Float { value: String },
+    Number { value: String },
 
-    Integer { value: String },
-
-    Symbol { name: Name, value: Option<Box<Expr>> }
+    Symbol { name: Name, value: Option<Box<Expr>> },
 }
 
 
@@ -76,6 +74,7 @@ pub enum OperatorKind {
     And,
     Or,
     Concat,
+    Pipe,
     BitAnd,
     BitOr,
     BitNot,
