@@ -45,12 +45,14 @@ impl Span {
     }
 
     pub const fn to(self, other: Self) -> Span {
-        Span {
-            end: other.end, ..self
-        }
+        Span::new(self.line, self.start, other.end)
     }
 
     pub const fn range(self) -> Range<usize> {
         (self.start as usize) .. (self.end as usize)
+    }
+
+    pub fn trim_end(self) -> Span {
+        Span::new(self.line, self.start, self.end - 1)
     }
 }

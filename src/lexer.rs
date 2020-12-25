@@ -1,6 +1,6 @@
 use std::str::Chars;
 
-use crate::token::{self, Token, TokenKind, TokenKindError};
+use crate::token::{get_keyword, get_operator, Token, TokenKind, TokenKindError};
 use crate::Span;
 
 pub const SYMBOLS: &str = "=.+-<>*/%^&|~:!?";
@@ -9,7 +9,9 @@ pub const SYMBOLS: &str = "=.+-<>*/%^&|~:!?";
 pub enum LexerMode {
     Regular,
 
-    Template,
+    String,
+
+    Interpolated
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +45,7 @@ impl<'src> Lexer<'src> {
         lexer
     }
 
-    fn advance(&mut self) {
+    fn align(&mut self) {
         self.start = self.offset;
     }
 
@@ -68,18 +70,46 @@ impl<'src> Lexer<'src> {
     }
 
     fn next_kind(&mut self) -> Option<TokenKind> {
-        loop {
-            self.advance();
+        match self.mode {
+            LexerMode::String => self.next_string(),
+            LexerMode::Regular |
+            LexerMode::Interpolated => self.next_regular(),
+        }
+    }
 
-            let kind = match self.curr {
-                Some('(') => self.single(TokenKind::OpeningParen),
-                Some(')') => self.single(TokenKind::ClosingParen),
-                Some('{') => self.single(TokenKind::OpeningBrace),
-                Some('}') => self.single(TokenKind::ClosingBrace),
-                Some('[') => self.single(TokenKind::OpeningBracket),
-                Some(']') => self.single(TokenKind::ClosingBracket),
-                Some(',') => self.single(TokenKind::Comma),
-                Some(';') => self.single(TokenKind::Semi),
+    fn next_regular(&mut self) -> Option<TokenKind> {
+        loop {
+            self.align();
+
+            match self.curr {
+                Some('(') => {
+                    return self.single(TokenKind::OpeningParen);
+                }
+                Some(')') => {
+                    return self.single(TokenKind::ClosingParen);
+                }
+                Some('{') => {
+                    return self.single(TokenKind::OpeningBrace);
+                }
+                Some('}') if self.mode == LexerMode::Interpolated => {
+                    self.mode = LexerMode::String;
+                    return self.single(TokenKind::ClosingBrace);
+                }
+                Some('}') => {
+                    return self.single(TokenKind::ClosingBrace);
+                }
+                Some('[') => {
+                    return self.single(TokenKind::OpeningBracket);
+                }
+                Some(']') => {
+                    return self.single(TokenKind::ClosingBracket);
+                }
+                Some(',') => {
+                    return self.single(TokenKind::Comma);
+                }
+                Some(';') => {
+                    return self.single(TokenKind::Semi);
+                }
                 Some(' ')
               | Some('\t')
               | Some('\r') => {
@@ -92,45 +122,63 @@ impl<'src> Lexer<'src> {
                 }
                 Some('_')
               | Some('a'..='z') => {
-                    Some(self.lower())
+                    return Some(self.lower());
                 }
                 Some('A'..='Z') => {
-                    Some(self.upper())
+                    return Some(self.upper());
                 }
                 Some('0'..='9') => {
-                    Some(self.number())
+                    return Some(self.number());
                 }
                 Some('"') => {
-                    Some(self.string())
+                    return self.next_string();
                 }
                 Some('/') if self.peek == Some('/') => {
                     self.comment();
                     continue;
                 }
                 Some(_) if self.is_symbol(self.curr) => {
-                    Some(self.operator())
+                    return Some(self.operator());
                 }
                 None => {
-                    None
+                    return None;
                 }
                 Some(_) => {
-                    Some(TokenKind::Error(TokenKindError::InvalidCharacter))
+                    return Some(TokenKind::Error(TokenKindError::InvalidCharacter));
                 }
-            };
-
-            return kind
+            }
         }
     }
 
-    fn string(&mut self) -> TokenKind {
-        let open = self.curr.unwrap();
-
-        self.bump();
+    fn next_string(&mut self) -> Option<TokenKind> {
+        self.align();
 
         loop {
             match self.curr {
+                Some('"') if self.mode == LexerMode::Regular => {
+                    self.mode = LexerMode::String;
+                    self.bump();
+                }
+                Some('"') => {
+                    self.mode = LexerMode::Regular;
+                    self.bump();
+                    return Some(TokenKind::String);
+                }
+                Some('{') if self.peek == Some('{') => {
+                    self.bump();
+                }
+                Some('{') => {
+                    self.mode = LexerMode::Interpolated;
+                    // self.bump();
+                    return Some(TokenKind::String);
+                }
+                Some('\n') |
+                None => {
+                    return Some(TokenKind::Error(TokenKindError::UnterminatedString));
+                }
                 Some('\\') => {
                     self.bump();
+
                     match self.curr {
                         Some('n') | Some('r')
                       | Some('t') | Some('v')
@@ -146,27 +194,15 @@ impl<'src> Lexer<'src> {
                             todo!("Validate binary escape")
                         }
                         _ => {
-                            return TokenKind::Error(TokenKindError::InvalidEscape)
+                            return Some(TokenKind::Error(TokenKindError::InvalidEscape));
                         }
                     }
                 }
-                Some('\n') |
-                None => {
-                    return TokenKind::Error(TokenKindError::UnterminatedString)
-                }
-                Some(chr) => {
-                    if chr == open {
-                        break;
-                    } else {
-                        self.bump();
-                    }
+                _ => {
+                    self.bump();
                 }
             }
         }
-
-        self.bump();
-
-        TokenKind::String
     }
 
     fn single(&mut self, token: TokenKind) -> Option<TokenKind> {
@@ -175,7 +211,11 @@ impl<'src> Lexer<'src> {
     }
 
     fn is_alpha(&self, chr: Option<char>) -> bool {
-        matches!(chr, Some('a'..='z') | Some('A'..='Z') | Some('_') | Some('0'..='9'))
+        matches!(chr,
+            Some('a'..='z') |
+            Some('A'..='Z') |
+            Some('0'..='9') |
+            Some('_'))
     }
 
     fn is_number(&self, chr: Option<char>) -> bool {
@@ -193,7 +233,7 @@ impl<'src> Lexer<'src> {
     fn lower(&mut self) -> TokenKind {
         while self.is_alpha(self.curr) { self.bump(); }
 
-        if let Some(keyword) = token::get_keyword(self.value()) {
+        if let Some(keyword) = get_keyword(self.value()) {
             keyword
         } else {
             TokenKind::Lower
@@ -208,7 +248,7 @@ impl<'src> Lexer<'src> {
     fn operator(&mut self) -> TokenKind {
         while self.is_symbol(self.curr) { self.bump(); }
 
-        if let Some(operator) = token::get_operator(self.value()) {
+        if let Some(operator) = get_operator(self.value()) {
             operator
         } else {
             TokenKind::Error(TokenKindError::InvalidOperator)

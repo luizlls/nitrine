@@ -49,6 +49,8 @@ pub enum ExprKind {
     Number { value: String },
 
     Symbol { name: Name, value: Option<Box<Expr>> },
+
+    Template { parts: Vec<Expr> }
 }
 
 

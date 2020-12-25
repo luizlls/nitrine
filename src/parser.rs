@@ -96,7 +96,7 @@ impl<'s> Parser<'s> {
                 self.number()?
             }
             TokenKind::String => {
-                self.string()?
+                self.template()?
             }
             TokenKind::OpeningParen => {
                 self.parens()?
@@ -180,11 +180,42 @@ impl<'s> Parser<'s> {
         self.make(number, span)
     }
 
-    fn string(&mut self) -> Result<Expr> {
-        let Token { span, .. } = self.eat(TokenKind::String)?;
+    fn template(&mut self) -> Result<Expr> {
+        let span = self.span();
 
-        // trim quotes
-        let span = Span::new(span.line, span.start + 1, span.end - 1);
+        let mut parts = vec![];
+
+        loop {
+            match self.token.kind {
+                TokenKind::String => {
+                    parts.push(self.fragment()?);
+                }
+                TokenKind::OpeningBrace => {
+                    self.eat(TokenKind::OpeningBrace)?;
+                    parts.push(self.expr()?);
+                    self.eat(TokenKind::ClosingBrace)?;
+                }
+                _ => { break; }
+            }
+        }
+
+        let parts = parts
+            .into_iter()
+            .filter(|part| {
+                match part.kind {
+                    ExprKind::String { ref value } if value.is_empty() => {
+                        false
+                    }
+                    _ => true
+                }
+            })
+            .collect();
+
+        self.make(ExprKind::Template { parts }, span)
+    }
+
+    fn fragment(&mut self) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::String)?;
 
         let string = ExprKind::String {
             value: self.source.content[span.range()].into()
@@ -306,13 +337,13 @@ impl<'s> Parser<'s> {
 
             self.bump();
 
-            let adjustment = match associativity {
+            let fix = match associativity {
                 Associativity::Right => 0,
                 Associativity::Left  => 1,
                 Associativity::None  => 1,
             };
 
-            let rhs = self.binary(precedence + adjustment)?;
+            let rhs = self.binary(precedence + fix)?;
 
             let span = lhs.span;
 
