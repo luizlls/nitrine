@@ -11,7 +11,7 @@ pub enum LexerMode {
 
     String,
 
-    Interpolated
+    Interpolation
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ impl<'src> Lexer<'src> {
         match self.mode {
             LexerMode::String => self.next_string(),
             LexerMode::Regular |
-            LexerMode::Interpolated => self.next_regular(),
+            LexerMode::Interpolation => self.next_regular(),
         }
     }
 
@@ -91,7 +91,7 @@ impl<'src> Lexer<'src> {
                 Some('{') => {
                     return self.single(TokenKind::OpeningBrace);
                 }
-                Some('}') if self.mode == LexerMode::Interpolated => {
+                Some('}') if self.mode == LexerMode::Interpolation => {
                     self.mode = LexerMode::String;
                     return self.single(TokenKind::ClosingBrace);
                 }
@@ -162,15 +162,15 @@ impl<'src> Lexer<'src> {
                 Some('"') => {
                     self.mode = LexerMode::Regular;
                     self.bump();
-                    return Some(TokenKind::String);
+                    return Some(TokenKind::String(true)); // finished
                 }
                 Some('{') if self.peek == Some('{') => {
                     self.bump();
                 }
                 Some('{') => {
-                    self.mode = LexerMode::Interpolated;
+                    self.mode = LexerMode::Interpolation;
                     // self.bump();
-                    return Some(TokenKind::String);
+                    return Some(TokenKind::String(false)); // fragment
                 }
                 Some('\n') |
                 None => {
@@ -282,10 +282,6 @@ impl<'src> Lexer<'src> {
             self.bump();
         }
     }
-
-    pub fn set_mode(&mut self, mode: LexerMode) {
-        self.mode = mode;
-    }
 }
 
 impl Iterator for Lexer<'_> {
@@ -345,7 +341,7 @@ mod tests {
     fn lex_simple_string() {
         let mut lexer = Lexer::new("\"Hello, World\"");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::String);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::String(true));
         assert_eq!(lexer.value(), "\"Hello, World\"");
     }
 
@@ -353,7 +349,7 @@ mod tests {
     fn lex_complex_string() {
         let mut lexer = Lexer::new(r#""src = \"y = 42\"""#);
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::String);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::String(true));
         assert_eq!(lexer.value(), "\"src = \\\"y = 42\\\"\"");
     }
 }

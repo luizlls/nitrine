@@ -64,7 +64,7 @@ pub enum TokenKind {
     Lower,
     Upper,
     Number,
-    String,
+    String(bool), // done?
 
     // string template
 
@@ -259,7 +259,7 @@ impl fmt::Display for TokenKind {
             TokenKind::BitShr => write!(f, ">>>"),
             TokenKind::BitShl => write!(f, "<<<"),
             TokenKind::Number => write!(f, "number"),
-            TokenKind::String => write!(f, "string"),
+            TokenKind::String(done) => if done { write!(f, "string") } else { write!(f, "string fragment") },
             TokenKind::Lower => write!(f, "lowercase identifier"),
             TokenKind::Upper => write!(f, "uppercase identifier"),
             TokenKind::EOF => write!(f, "end of file"),

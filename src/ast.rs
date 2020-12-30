@@ -2,7 +2,7 @@ use crate::Span;
 
 #[derive(Debug, Clone)]
 pub struct Name {
-    pub name: std::string::String,
+    pub name: String,
     pub span: Span
 }
 

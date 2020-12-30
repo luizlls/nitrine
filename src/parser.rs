@@ -1,7 +1,7 @@
 use crate::{Source, Span};
 use crate::ast::*;
 use crate::token::{Token, TokenKind, TokenKindError, Associativity};
-use crate::lexer::{Lexer};
+use crate::lexer::Lexer;
 use crate::error::{Result, NitrineError};
 
 pub struct Parser<'s> {
@@ -95,7 +95,7 @@ impl<'s> Parser<'s> {
             TokenKind::Number => {
                 self.number()?
             }
-            TokenKind::String => {
+            TokenKind::String(_) => {
                 self.template()?
             }
             TokenKind::OpeningParen => {
@@ -161,7 +161,7 @@ impl<'s> Parser<'s> {
           | TokenKind::OpeningBrace
           | TokenKind::OpeningBracket
           | TokenKind::Number
-          | TokenKind::String if self.same_line(span.line) => {
+          | TokenKind::String(true) if self.same_line(span.line) => {
                 Some(box self.term()?)
             }
             _ => None
@@ -187,8 +187,12 @@ impl<'s> Parser<'s> {
 
         loop {
             match self.token.kind {
-                TokenKind::String => {
-                    parts.push(self.fragment()?);
+                TokenKind::String(false) => {
+                    parts.push(self.string(false)?);
+                }
+                TokenKind::String(true) => {
+                    parts.push(self.string(true)?);
+                    break;
                 }
                 TokenKind::OpeningBrace => {
                     self.eat(TokenKind::OpeningBrace)?;
@@ -214,8 +218,8 @@ impl<'s> Parser<'s> {
         self.make(ExprKind::Template { parts }, span)
     }
 
-    fn fragment(&mut self) -> Result<Expr> {
-        let Token { span, .. } = self.eat(TokenKind::String)?;
+    fn string(&mut self, done: bool) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::String(done))?;
 
         let string = ExprKind::String {
             value: self.source.content[span.range()].into()
