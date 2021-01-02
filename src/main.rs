@@ -49,9 +49,7 @@ fn read_line() -> Result<String, ()> {
 }
 
 fn exec(source: Source) {
-    let module: Result<Vec<_>, _> = Parser::new(&source).collect();
-
-    match module {
+    match Parser::new(&source).parse() {
         Ok(ast) => {
             println!("{:#?}", ast);
         }

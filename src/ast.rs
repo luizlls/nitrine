@@ -1,17 +1,29 @@
 use crate::Span;
 
 #[derive(Debug, Clone)]
+pub struct Program {
+    pub name: String,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Name {
     pub name: String,
     pub span: Span
 }
 
 #[derive(Debug, Clone)]
-pub struct Function {
+pub struct Item {
     pub name: Name,
-    pub parameters: Vec<Name>,
-    pub body: Expr,
+    pub kind: ItemKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ItemKind {
+    Function { parameters: Vec<Name>, value: Expr },
+
+    Constant { value: Expr }
 }
 
 #[derive(Debug, Clone)]
@@ -38,19 +50,19 @@ pub enum ExprKind {
 
     If { test: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr> },
 
+    String { value: String },
+
+    Number { value: String },
+
+    Template { parts: Vec<Expr> },
+
+    Symbol { name: Name, value: Option<Box<Expr>> },
+
     Tuple { items: Vec<Expr> },
 
     List { items: Vec<Expr> },
 
     Object { base: Option<Name>, props: Vec<(Name, Option<Expr>)> },
-
-    String { value: String },
-
-    Number { value: String },
-
-    Symbol { name: Name, value: Option<Box<Expr>> },
-
-    Template { parts: Vec<Expr> }
 }
 
 
@@ -62,6 +74,9 @@ pub struct Operator {
 
 #[derive(Debug, Clone)]
 pub enum OperatorKind {
+    Bind,
+    Neg,
+    Pos,
     Add,
     Sub,
     Mul,
@@ -75,18 +90,16 @@ pub enum OperatorKind {
     Ge,
     And,
     Or,
-    Concat,
+    Not,
+    Is,
+    IsNot,
     Pipe,
+    Concat,
     BitAnd,
     BitOr,
     BitNot,
     BitXor,
     BitShl,
     BitShr,
-    Neg,
-    Pos,
-    Is,
-    Not,
     Member,
-    Bind,
 }

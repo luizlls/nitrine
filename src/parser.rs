@@ -28,12 +28,50 @@ impl<'s> Parser<'s> {
         parser
     }
 
-    fn parse(&mut self) -> Result<Function> {
-        self.function()
+    pub fn parse(&mut self) -> Result<Program> {
+        let mut items = vec![];
+
+        while !self.done() {
+            items.push(self.item()?);
+        }
+
+        let name = self.source.path.file_name().unwrap().to_str().unwrap().into();
+
+        Ok(Program { name, items })
     }
 
-    fn function(&mut self) -> Result<Function> {
-        let start = self.span();
+    fn item(&mut self) -> Result<Item> {
+        match self.token.kind {
+            TokenKind::Lower => {
+                if self.peek_is(TokenKind::OpeningParen) {
+                    self.function()
+                } else {
+                    self.constant()
+                }
+            }
+            _ => {
+                Err(NitrineError::error(
+                    self.span(), "expected a constant or function definition".into()))
+            }
+        }
+    }
+
+    fn constant(&mut self) -> Result<Item> {
+        let span = self.span();
+
+        let name = self.name()?;
+
+        self.eat(TokenKind::Equals)?;
+
+        let value = self.expr()?;
+
+        let span = span.to(value.span);
+
+        Ok(Item { name, kind: ItemKind::Constant { value }, span })
+    }
+
+    fn function(&mut self) -> Result<Item> {
+        let span = self.span();
 
         let name = self.name()?;
 
@@ -48,11 +86,11 @@ impl<'s> Parser<'s> {
 
         self.eat(TokenKind::Equals)?;
 
-        let body = self.expr()?;
+        let value = self.expr()?;
 
-        let span = start.to(body.span);
+        let span = span.to(value.span);
 
-        Ok(Function { name, parameters, body, span })
+        Ok(Item { name, kind: ItemKind::Function { value, parameters }, span })
     }
 
     fn name(&mut self) -> Result<Name> {
@@ -294,10 +332,15 @@ impl<'s> Parser<'s> {
     fn object_key_val(&mut self) -> Result<(Name, Option<Expr>)> {
         let key = self.name()?;
 
-        let val = if self.maybe_eat(TokenKind::Equals) {
-            Some(self.expr()?)
-        } else {
-            None
+        let val = match self.token.kind {
+            TokenKind::Equals if self.same_line(key.span.line) => {
+                self.bump();
+                Some(self.expr()?)
+            }
+            TokenKind::OpeningBrace if self.same_line(key.span.line) => {
+                Some(self.expr()?)
+            }
+            _ => None
         };
 
         Ok((key, val))
@@ -548,17 +591,5 @@ impl<'s> Parser<'s> {
         };
 
         NitrineError::error(span, msg)
-    }
-}
-
-impl Iterator for Parser<'_> {
-    type Item = Result<Function>;
-
-    fn next(&mut self) -> Option<Result<Function>> {
-        if !self.done() {
-            Some(self.parse())
-        } else {
-            None
-        }
     }
 }
