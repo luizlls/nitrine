@@ -42,7 +42,7 @@ impl<'s> Parser<'s> {
 
     fn item(&mut self) -> Result<Item> {
         match self.token.kind {
-            TokenKind::Lower => {
+            TokenKind::Ident => {
                 if self.peek_is(TokenKind::OpeningParen) {
                     self.function()
                 } else {
@@ -60,14 +60,11 @@ impl<'s> Parser<'s> {
         let span = self.span();
 
         let name = self.name()?;
-
         self.eat(TokenKind::Equals)?;
-
         let value = self.expr()?;
 
         let span = span.to(value.span);
-
-        Ok(Item { name, kind: ItemKind::Constant { value }, span })
+        Ok(Item { kind: ItemKind::Constant { name, value }, span })
     }
 
     fn function(&mut self) -> Result<Item> {
@@ -90,11 +87,11 @@ impl<'s> Parser<'s> {
 
         let span = span.to(value.span);
 
-        Ok(Item { name, kind: ItemKind::Function { value, parameters }, span })
+        Ok(Item { kind: ItemKind::Function { name, value, parameters }, span })
     }
 
     fn name(&mut self) -> Result<Name> {
-        let Token { span, .. } = self.eat(TokenKind::Lower)?;
+        let Token { span, .. } = self.eat(TokenKind::Ident)?;
         let name = self.source.content[span.range()].into();
         Ok(Name { name, span })
     }
@@ -118,16 +115,16 @@ impl<'s> Parser<'s> {
 
     fn term(&mut self) -> Result<Expr> {
         let term = match self.token.kind {
-            TokenKind::Lower => {
+            TokenKind::Ident => {
                 if self.peek_is(TokenKind::OpeningBrace) {
                     self.object()?
                 } else {
                     let span = self.span();
                     let name = self.name()?;
-                    self.make(ExprKind::Name { name }, span)?
+                    self.make(ExprKind::Var { name }, span)?
                 }
             }
-            TokenKind::Upper => {
+            TokenKind::Symbol => {
                 self.symbol()?
             }
             TokenKind::Number => {
@@ -135,6 +132,10 @@ impl<'s> Parser<'s> {
             }
             TokenKind::String(_) => {
                 self.template()?
+            }
+            TokenKind::True
+          | TokenKind::False => {
+                self.boolean()?
             }
             TokenKind::OpeningParen => {
                 self.parens()?
@@ -159,17 +160,6 @@ impl<'s> Parser<'s> {
     fn apply(&mut self, fun: Expr) -> Result<Expr> {
         let span = fun.span;
 
-        let valid = match &fun.kind {
-            ExprKind::Name  { .. }
-          | ExprKind::Group { .. }
-          | ExprKind::Block { .. } => true,
-            _ => false
-        };
-
-        if !valid {
-            return Ok(fun);
-        }
-
         let mut expr = fun;
 
         loop {
@@ -192,30 +182,16 @@ impl<'s> Parser<'s> {
 
         let name = self.name()?;
 
-        let value = match self.token.kind {
-            TokenKind::Lower
-          | TokenKind::Upper
-          | TokenKind::OpeningParen
-          | TokenKind::OpeningBrace
-          | TokenKind::OpeningBracket
-          | TokenKind::Number
-          | TokenKind::String(true) if self.same_line(span.line) => {
-                Some(box self.term()?)
-            }
-            _ => None
+        let value = if self.matches(TokenKind::OpeningParen) && self.same_line(span.line) {
+            self.eat(TokenKind::OpeningParen)?;
+            let value = self.expr()?;
+            self.eat(TokenKind::ClosingParen)?;
+            Some(box value)
+        } else {
+            None
         };
 
         self.make(ExprKind::Symbol { name, value }, span)
-    }
-
-    fn number(&mut self) -> Result<Expr> {
-        let Token { span, .. } = self.eat(TokenKind::Number)?;
-
-        let number = ExprKind::Number {
-            value: self.source.content[span.range()].into()
-        };
-
-        self.make(number, span)
     }
 
     fn template(&mut self) -> Result<Expr> {
@@ -225,12 +201,11 @@ impl<'s> Parser<'s> {
 
         loop {
             match self.token.kind {
-                TokenKind::String(false) => {
-                    parts.push(self.string(false)?);
-                }
-                TokenKind::String(true) => {
-                    parts.push(self.string(true)?);
-                    break;
+                TokenKind::String(done) => {
+                    parts.push(self.string(done)?);
+                    if done {
+                        break;
+                    }
                 }
                 TokenKind::OpeningBrace => {
                     self.eat(TokenKind::OpeningBrace)?;
@@ -266,6 +241,28 @@ impl<'s> Parser<'s> {
         self.make(string, span)
     }
 
+    fn number(&mut self) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::Number)?;
+
+        let number = ExprKind::Number {
+            value: self.source.content[span.range()].into()
+        };
+
+        self.make(number, span)
+    }
+
+    fn boolean(&mut self) -> Result<Expr> {
+        let span = self.span();
+
+        let boolean = ExprKind::Bool {
+            value: self.matches(TokenKind::True)
+        };
+
+        self.bump();
+
+        self.make(boolean, span)
+    }
+
     fn list(&mut self) -> Result<Expr> {
         let span = self.span();
 
@@ -296,7 +293,7 @@ impl<'s> Parser<'s> {
     fn object(&mut self) -> Result<Expr> {
         let span = self.span();
 
-        let base = if self.matches(TokenKind::Lower) {
+        let base = if self.matches(TokenKind::Ident) {
             Some(self.name()?)
         } else {
             None

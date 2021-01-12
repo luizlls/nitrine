@@ -14,16 +14,15 @@ pub struct Name {
 
 #[derive(Debug, Clone)]
 pub struct Item {
-    pub name: Name,
     pub kind: ItemKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub enum ItemKind {
-    Function { parameters: Vec<Name>, value: Expr },
+    Function { name: Name, parameters: Vec<Name>, value: Expr },
 
-    Constant { value: Expr }
+    Constant { name: Name, value: Expr }
 }
 
 #[derive(Debug, Clone)]
@@ -34,7 +33,7 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Name { name: Name },
+    Var { name: Name },
 
     Lambda { parameters: Vec<Name>, body: Box<Expr> },
 
@@ -53,6 +52,8 @@ pub enum ExprKind {
     String { value: String },
 
     Number { value: String },
+
+    Bool { value: bool },
 
     Template { parts: Vec<Expr> },
 

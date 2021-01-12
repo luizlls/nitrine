@@ -121,11 +121,9 @@ impl<'src> Lexer<'src> {
                     continue;
                 }
                 Some('_')
-              | Some('a'..='z') => {
-                    return Some(self.lower());
-                }
-                Some('A'..='Z') => {
-                    return Some(self.upper());
+              | Some('a'..='z')
+              | Some('A'..='Z') => {
+                    return Some(self.ident());
                 }
                 Some('0'..='9') => {
                     return Some(self.number());
@@ -230,19 +228,23 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn lower(&mut self) -> TokenKind {
+    fn ident(&mut self) -> TokenKind {
         while self.is_alpha(self.curr) { self.bump(); }
+
+        let symbol = if self.curr == Some('\'') {
+            self.bump();
+            true
+        } else {
+            false
+        };
 
         if let Some(keyword) = get_keyword(self.value()) {
             keyword
+        } else if symbol {
+            TokenKind::Symbol
         } else {
-            TokenKind::Lower
+            TokenKind::Ident
         }
-    }
-
-    fn upper(&mut self) -> TokenKind {
-        while self.is_alpha(self.curr) { self.bump(); }
-        TokenKind::Upper
     }
 
     fn operator(&mut self) -> TokenKind {
@@ -300,8 +302,16 @@ mod tests {
     fn lex_identifier() {
         let mut lexer = Lexer::new("variable = 1");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Lower);
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Ident);
         assert_eq!(lexer.value(), "variable");
+    }
+
+    #[test]
+    fn lex_symbol() {
+        let mut lexer = Lexer::new("Symbolic'");
+
+        assert_eq!(lexer.next().unwrap().kind, TokenKind::Symbol);
+        assert_eq!(lexer.value(), "Symbolic'");
     }
 
     #[test]
@@ -316,9 +326,9 @@ mod tests {
     fn lex_operator() {
        let mut lexer = Lexer::new("a + b");
 
-       assert_eq!(lexer.next().unwrap().kind, TokenKind::Lower);
+       assert_eq!(lexer.next().unwrap().kind, TokenKind::Ident);
        assert_eq!(lexer.next().unwrap().kind, TokenKind::Add);
-       assert_eq!(lexer.next().unwrap().kind, TokenKind::Lower);
+       assert_eq!(lexer.next().unwrap().kind, TokenKind::Ident);
     }
 
     #[test]

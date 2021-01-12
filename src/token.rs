@@ -34,17 +34,20 @@ pub enum TokenKind {
     Fn,
     Then,
     Else,
+    True,
+    False,
 
     // operators
+    Is,      // is
+    And,     // and
+    Or,      // or
+    Not,     // not
+
     Add,     // +
     Sub,     // -
     Mul,     // *
     Div,     // /
     Rem,     // %
-    Is,      // is
-    And,     // and
-    Or,      // or
-    Not,     // not
     Eq,      // ==
     Ne,      // !=
     Lt,      // <
@@ -61,8 +64,8 @@ pub enum TokenKind {
     BitShl,  // <<<
 
     // values
-    Lower,
-    Upper,
+    Ident,
+    Symbol,
     Number,
     String(bool), // done?
 
@@ -92,15 +95,17 @@ impl Default for TokenKind {
 
 pub fn get_keyword(key: &str) -> Option<TokenKind> {
     match key {
-        "do"   => Some(TokenKind::Do),
-        "if"   => Some(TokenKind::If),
-        "then" => Some(TokenKind::Then),
-        "else" => Some(TokenKind::Else),
-        "fn"   => Some(TokenKind::Fn),
-        "is"   => Some(TokenKind::Is),
-        "and"  => Some(TokenKind::And),
-        "or"   => Some(TokenKind::Or),
-        "not"  => Some(TokenKind::Not),
+        "do"    => Some(TokenKind::Do),
+        "if"    => Some(TokenKind::If),
+        "then"  => Some(TokenKind::Then),
+        "else"  => Some(TokenKind::Else),
+        "true"  => Some(TokenKind::True),
+        "false" => Some(TokenKind::False),
+        "fn"    => Some(TokenKind::Fn),
+        "is"    => Some(TokenKind::Is),
+        "and"   => Some(TokenKind::And),
+        "or"    => Some(TokenKind::Or),
+        "not"   => Some(TokenKind::Not),
         _ => None,
     }
 }
@@ -235,6 +240,8 @@ impl fmt::Display for TokenKind {
             TokenKind::If => write!(f, "if"),
             TokenKind::Then => write!(f, "then"),
             TokenKind::Else => write!(f, "else"),
+            TokenKind::True => write!(f, "true"),
+            TokenKind::False => write!(f, "false"),
             TokenKind::Add => write!(f, "+"),
             TokenKind::Sub => write!(f, "-"),
             TokenKind::Mul => write!(f, "*"),
@@ -260,8 +267,8 @@ impl fmt::Display for TokenKind {
             TokenKind::BitShl => write!(f, "<<<"),
             TokenKind::Number => write!(f, "number"),
             TokenKind::String(done) => if done { write!(f, "string") } else { write!(f, "string fragment") },
-            TokenKind::Lower => write!(f, "lowercase identifier"),
-            TokenKind::Upper => write!(f, "uppercase identifier"),
+            TokenKind::Ident => write!(f, "identifier"),
+            TokenKind::Symbol => write!(f, "symbol"),
             TokenKind::EOF => write!(f, "end of file"),
             TokenKind::Error(_) => write!(f, "invalid symbol")
         }

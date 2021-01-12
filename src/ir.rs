@@ -1,89 +1,38 @@
 use crate::Span;
 
 #[derive(Debug, Clone)]
-pub struct Program {
-    pub name: String,
-    pub nodes: Vec<Node>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Label {
-    Local { name: String },
-
-    Global { name: String },
-
-    Block { name: String },
-}
-
-#[derive(Debug, Clone)]
 pub struct Node {
-    pub name: String,
     pub kind: NodeKind,
-    pub span: Span,
+    pub span: Span
 }
 
 #[derive(Debug, Clone)]
 pub enum NodeKind {
+    Fn { parameters: Vec<String>, body: Box<Node> },
 
-    Fn { parameters: Vec<String>, blocks: Vec<Block> },
+    Let { name: String, value: Box<Node>, },
 
-    Apply { operation: Operation, arguments: Vec<Label> },
+    Var { name: String },
 
-    Branch { target: (Label, Vec<Label>) },
+    Apply { function: String, args: Vec<Node> },
 
-    BranchIf { test: Label, target_then: (Label, Vec<Label>), target_else: (Label, Vec<Label>), },
-
-    Local { name: Label },
-
-    Global { name: Label },
-
-    String { value: String },
-
-    Number { value: String },
-
-    Symbol { name: String, value: Label },
-
-    Tuple { items: Vec<Node> },
+    Cond { test: Box<Node>, then: Box<Node>, otherwise: Box<Node> },
 
     List { items: Vec<Node> },
 
-    Object { base: Option<Label>, props: Vec<(String, Label)> },
-}
+    Object { base: Option<String>, props: Vec<(String, Option<Node>)> },
 
-#[derive(Debug, Clone)]
-pub struct Block {
-    label: Label,
-    nodes: Vec<Node>,
-}
+    String { value: String },
 
-#[derive(Debug, Clone)]
-pub enum Operation {
-    Call,
-    Neg,
-    Pos,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    And,
-    Or,
-    Not,
-    Is,
-    IsNot,
-    Pipe,
-    Concat,
-    BitAnd,
-    BitOr,
-    BitNot,
-    BitXor,
-    BitShl,
-    BitShr,
-    Member,
+    Float { value: f64 },
+
+    Integer { value: i64 },
+
+    Symbol { name: String, value: Option<Box<Node>> },
+
+    True,
+
+    False,
+
+    Unit,
 }
