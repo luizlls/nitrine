@@ -3,7 +3,7 @@ use std::str::Chars;
 use crate::token::{get_keyword, get_operator, Token, TokenKind, TokenKindError};
 use crate::Span;
 
-pub const SYMBOLS: &str = "=.+-<>*/%^&|~:!?";
+const SYMBOLS: &str = "=.+-<>*/%^&|~:!?";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexerMode {
@@ -231,12 +231,19 @@ impl<'src> Lexer<'src> {
     fn ident(&mut self) -> TokenKind {
         while self.is_alpha(self.curr) { self.bump(); }
 
-        let symbol = if self.curr == Some('\'') {
-            self.bump();
-            true
-        } else {
-            false
-        };
+        let mut symbol = false;
+
+        match self.curr {
+            Some('\'') => {
+                symbol = true;
+                self.bump();
+            }
+            Some('?')
+          | Some('!') => {
+                self.bump();
+            }
+            _ => {}
+        }
 
         if let Some(keyword) = get_keyword(self.value()) {
             keyword

@@ -4,12 +4,8 @@ use crate::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Token {
-    pub(crate) kind: TokenKind,
-    pub(crate) span: Span
-}
-
-impl Token {
-
+    pub kind: TokenKind,
+    pub span: Span
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

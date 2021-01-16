@@ -3,7 +3,6 @@
 #![feature(try_trait)]
 #![macro_use]
 
-pub mod ir;
 pub mod ast;
 pub mod token;
 pub mod lexer;
