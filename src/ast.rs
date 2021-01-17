@@ -3,7 +3,7 @@ use crate::Span;
 #[derive(Debug, Clone)]
 pub struct Program {
     pub name: String,
-    pub items: Vec<Item>,
+    pub nodes: Vec<Node>,
 }
 
 #[derive(Debug, Clone)]
@@ -13,57 +13,49 @@ pub struct Name {
 }
 
 #[derive(Debug, Clone)]
-pub struct Item {
-    pub kind: ItemKind,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum ItemKind {
-    Function { name: Name, parameters: Vec<Name>, value: Expr },
-
-    Constant { name: Name, value: Expr }
-}
-
-#[derive(Debug, Clone)]
-pub struct Expr {
-    pub kind: ExprKind,
+pub struct Node {
+    pub kind: NodeKind,
     pub span: Span
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprKind {
-    Var { name: Name },
+pub enum NodeKind {
 
-    Lambda { parameters: Vec<Name>, body: Box<Expr> },
+    Function { parameters: Vec<Name>, value: Box<Node> },
 
-    Block { items: Vec<Expr> },
+    Let { name: Name, value: Box<Node> },
 
-    Group { inner: Box<Expr> },
+    Apply { function: Box<Node>, arguments: Vec<Node> },
 
-    Apply { function: Box<Expr>, args: Vec<Expr> },
+    Name { name: Name },
 
-    Binary { operator: Operator, lhs: Box<Expr>, rhs: Box<Expr> },
+    Unary { operator: Operator, rhs: Box<Node> },
 
-    Unary { operator: Operator, rhs: Box<Expr> },
+    Binary { operator: Operator, lhs: Box<Node>, rhs: Box<Node> },
 
-    If { test: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr> },
+    Block { items: Vec<Node> },
+
+    If { test: Box<Node>, then: Box<Node>, otherwise: Box<Node> },
+
+    Symbol { name: Name },
+
+    Tuple { items: Vec<Node> },
+
+    List { items: Vec<Node> },
+
+    Object { properties: Vec<(Name, Option<Node>)> },
+
+    Integer { value: i64 },
+
+    Float { value: f64 },
 
     String { value: String },
 
-    Number { value: String },
-
     Bool { value: bool },
 
-    Template { parts: Vec<Expr> },
+    Template { parts: Vec<Node> },
 
-    Symbol { name: Name, value: Option<Box<Expr>> },
-
-    Tuple { items: Vec<Expr> },
-
-    List { items: Vec<Expr> },
-
-    Object { base: Option<Name>, props: Vec<(Name, Option<Expr>)> },
+    Unit,
 }
 
 
@@ -102,5 +94,6 @@ pub enum OperatorKind {
     BitXor,
     BitShl,
     BitShr,
+    Chain,
     Member,
 }

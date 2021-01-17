@@ -171,6 +171,7 @@ impl TokenKind {
           | TokenKind::BitXor
           | TokenKind::BitShr
           | TokenKind::BitShl
+          | TokenKind::Semi
           | TokenKind::Dot
           | TokenKind::Equals => true,
           _ => false
@@ -211,6 +212,7 @@ impl TokenKind {
             TokenKind::Pipe   => Some((3,  Associativity::Left)),
             TokenKind::Dot    => Some((2,  Associativity::Right)),
             TokenKind::Equals => Some((1,  Associativity::Right)),
+            TokenKind::Semi   => Some((0,  Associativity::Right)),
             _ => None
         }
     }

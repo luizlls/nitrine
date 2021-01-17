@@ -71,17 +71,28 @@ impl<'src> Lexer<'src> {
 
     fn next_kind(&mut self) -> Option<TokenKind> {
         match self.mode {
-            LexerMode::String => self.next_string(),
+            LexerMode::String => self.template(),
             LexerMode::Regular |
-            LexerMode::Interpolation => self.next_regular(),
+            LexerMode::Interpolation => self.regular(),
         }
     }
 
-    fn next_regular(&mut self) -> Option<TokenKind> {
+    fn regular(&mut self) -> Option<TokenKind> {
         loop {
             self.align();
 
             match self.curr {
+                Some('a'..='z')
+              | Some('A'..='Z')
+              | Some('_') => {
+                    return Some(self.ident());
+                }
+                Some('0'..='9') => {
+                    return Some(self.number());
+                }
+                Some('\'') => {
+                    return Some(self.symbol());
+                }
                 Some('(') => {
                     return self.single(TokenKind::OpeningParen);
                 }
@@ -110,29 +121,21 @@ impl<'src> Lexer<'src> {
                 Some(';') => {
                     return self.single(TokenKind::Semi);
                 }
+                Some('"') => {
+                    return self.template();
+                }
+                Some('/') if self.peek == Some('/') => {
+                    self.comment();
+                    continue;
+                }
                 Some(' ')
               | Some('\t')
               | Some('\r') => {
-                    self.bump();
+                    self.space();
                     continue;
                 }
                 Some('\n') => {
                     self.line();
-                    continue;
-                }
-                Some('_')
-              | Some('a'..='z')
-              | Some('A'..='Z') => {
-                    return Some(self.ident());
-                }
-                Some('0'..='9') => {
-                    return Some(self.number());
-                }
-                Some('"') => {
-                    return self.next_string();
-                }
-                Some('/') if self.peek == Some('/') => {
-                    self.comment();
                     continue;
                 }
                 Some(_) if self.is_symbol(self.curr) => {
@@ -148,7 +151,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn next_string(&mut self) -> Option<TokenKind> {
+    fn template(&mut self) -> Option<TokenKind> {
         self.align();
 
         loop {
@@ -231,13 +234,7 @@ impl<'src> Lexer<'src> {
     fn ident(&mut self) -> TokenKind {
         while self.is_alpha(self.curr) { self.bump(); }
 
-        let mut symbol = false;
-
         match self.curr {
-            Some('\'') => {
-                symbol = true;
-                self.bump();
-            }
             Some('?')
           | Some('!') => {
                 self.bump();
@@ -247,8 +244,6 @@ impl<'src> Lexer<'src> {
 
         if let Some(keyword) = get_keyword(self.value()) {
             keyword
-        } else if symbol {
-            TokenKind::Symbol
         } else {
             TokenKind::Ident
         }
@@ -279,16 +274,43 @@ impl<'src> Lexer<'src> {
         TokenKind::Number
     }
 
+    fn symbol(&mut self) -> TokenKind {
+        self.bump();
+
+        loop {
+            match self.curr {
+                Some('\n')
+              | Some('\t')
+              | Some('\r')
+              | Some(' ')
+              | Some('\'')
+              | None => break,
+                _ => {
+                    self.bump()
+                }
+            }
+        }
+
+        TokenKind::Symbol
+    }
+
+    fn space(&mut self) {
+        while matches!(self.curr, Some('\r') | Some('\t') | Some(' ')) {
+            self.bump();
+        }
+    }
+
     fn comment(&mut self) {
         loop {
             match self.curr {
-                Some('\n') |
-                None => {
+                Some('\n')
+              | None => {
                     return;
                 }
-                _ => {}
+                _ => {
+                    self.bump();
+                }
             }
-            self.bump();
         }
     }
 }
@@ -315,10 +337,10 @@ mod tests {
 
     #[test]
     fn lex_symbol() {
-        let mut lexer = Lexer::new("Symbolic'");
+        let mut lexer = Lexer::new("'symbol");
 
         assert_eq!(lexer.next().unwrap().kind, TokenKind::Symbol);
-        assert_eq!(lexer.value(), "Symbolic'");
+        assert_eq!(lexer.value(), "'symbol");
     }
 
     #[test]
