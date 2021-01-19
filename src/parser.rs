@@ -420,6 +420,13 @@ impl<'s> Parser<'s> {
             TokenKind::Mul => OperatorKind::Mul,
             TokenKind::Div => OperatorKind::Div,
             TokenKind::Rem => OperatorKind::Rem,
+            TokenKind::Concat => OperatorKind::Concat,
+            TokenKind::BitAnd => OperatorKind::BitAnd,
+            TokenKind::BitOr  => OperatorKind::BitOr,
+            TokenKind::BitXor => OperatorKind::BitXor,
+            TokenKind::BitShr => OperatorKind::BitShr,
+            TokenKind::BitShl => OperatorKind::BitShl,
+            TokenKind::BitNot => OperatorKind::BitNot,
             TokenKind::And => OperatorKind::And,
             TokenKind::Or  => OperatorKind::Or,
             TokenKind::Is  => OperatorKind::Is,
@@ -430,17 +437,22 @@ impl<'s> Parser<'s> {
             TokenKind::Le  => OperatorKind::Le,
             TokenKind::Gt  => OperatorKind::Gt,
             TokenKind::Ge  => OperatorKind::Ge,
-            TokenKind::Concat => OperatorKind::Concat,
             TokenKind::Pipe   => OperatorKind::Pipe,
-            TokenKind::BitAnd => OperatorKind::BitAnd,
-            TokenKind::BitOr  => OperatorKind::BitOr,
-            TokenKind::BitNot => OperatorKind::BitNot,
-            TokenKind::BitXor => OperatorKind::BitXor,
-            TokenKind::BitShr => OperatorKind::BitShr,
-            TokenKind::BitShl => OperatorKind::BitShl,
             TokenKind::Semi   => OperatorKind::Chain,
             TokenKind::Dot    => OperatorKind::Member,
-            TokenKind::Equals => OperatorKind::Bind,
+            TokenKind::Equals => OperatorKind::Let,
+            TokenKind::Warlus => OperatorKind::Mut,
+            TokenKind::AddEq => OperatorKind::MutAdd,
+            TokenKind::SubEq => OperatorKind::MutSub,
+            TokenKind::MulEq => OperatorKind::MutMul,
+            TokenKind::DivEq => OperatorKind::MutDiv,
+            TokenKind::RemEq => OperatorKind::MutRem,
+            TokenKind::ConcatEq => OperatorKind::MutConcat,
+            TokenKind::BitAndEq => OperatorKind::MutBitAnd,
+            TokenKind::BitOrEq  => OperatorKind::MutBitOr,
+            TokenKind::BitXorEq => OperatorKind::MutBitXor,
+            TokenKind::BitShrEq => OperatorKind::MutBitShr,
+            TokenKind::BitShlEq => OperatorKind::MutBitShl,
             _ => {
                 return Err(NitrineError::error(
                     span,
@@ -585,17 +597,11 @@ impl<'s> Parser<'s> {
         let Token { kind, span } = self.token;
 
         let msg = match kind {
-            TokenKind::Error(TokenKindError::InvalidCharacter) => {
-                "Invalid character".into()
-            }
-            TokenKind::Error(TokenKindError::InvalidEscape) => {
-                "Invalid escape character".into()
-            }
-            TokenKind::Error(TokenKindError::InvalidOperator) => {
-                "Invalid operator".into()
-            }
-            TokenKind::Error(TokenKindError::UnterminatedString) => {
-                "Unterminated string".into()
+            TokenKind::Error(TokenKindError::InvalidCharacter)
+          | TokenKind::Error(TokenKindError::InvalidEscape)
+          | TokenKind::Error(TokenKindError::InvalidOperator)
+          | TokenKind::Error(TokenKindError::Unterminated) => {
+                format!("{}", kind)
             }
             _ => format!("Unexpected `{}`", kind)
         };

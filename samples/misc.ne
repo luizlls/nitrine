@@ -28,12 +28,10 @@ factorial(n) =
   if n <= 1 then 1 else n * factorial (n - 1)
 
 
-counter(action) =
-  count = 0;
+counter() =
+  count := 0;
   div [
-    button "click me!" {
-      click() =
-        count = count + 1; action(),
-    },
-    "count: {count}"
+    button "+" { click() = count += 1 },
+    p ["total ", strong "{count}"],
+    button "-" { click() = count -= 1 },
   ]

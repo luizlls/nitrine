@@ -175,7 +175,7 @@ impl<'src> Lexer<'src> {
                 }
                 Some('\n') |
                 None => {
-                    return Some(TokenKind::Error(TokenKindError::UnterminatedString));
+                    return Some(TokenKind::Error(TokenKindError::Unterminated));
                 }
                 Some('\\') => {
                     self.bump();
