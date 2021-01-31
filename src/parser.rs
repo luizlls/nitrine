@@ -4,22 +4,33 @@ use crate::token::{Token, TokenKind, TokenKindError, Associativity};
 use crate::lexer::Lexer;
 use crate::error::{Result, NitrineError};
 
-pub struct Parser<'s> {
+#[derive(Clone, Copy, PartialEq)]
+enum Nesting {
+    Paren,
+    Brace,
+    Bracket,
+    Fun,
+    Def,
+}
+
+struct Parser<'s> {
     lexer: Lexer<'s>,
-    prev: Token,
+    prev:  Token,
     token: Token,
-    peek: Token,
+    peek:  Token,
     source: &'s Source,
+    depth: Vec<Nesting>,
 }
 
 impl<'s> Parser<'s> {
-    pub fn new(source: &'s Source) -> Parser {
+    fn new(source: &'s Source) -> Parser {
         let mut parser = Parser {
             lexer: Lexer::new(&source.content),
-            prev: Token::default(),
+            prev:  Token::default(),
             token: Token::default(),
-            peek: Token::default(),
+            peek:  Token::default(),
             source,
+            depth: vec![]
         };
 
         parser.bump(); // token
@@ -28,64 +39,149 @@ impl<'s> Parser<'s> {
         parser
     }
 
-    pub fn parse(&mut self) -> Result<Program> {
-        let mut nodes = vec![];
-
-        while !self.done() {
-            nodes.push(self.top_level()?);
-        }
-
-        let name = self.source.path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-
-        Ok(Program { name, nodes })
+    fn name(&mut self) -> Result<Name> {
+        let Token { span, .. } = self.eat(TokenKind::Lower)?;
+        let name = self.source.content[span.range()].into();
+        Ok(Name { name, span })
     }
 
-    fn top_level(&mut self) -> Result<Node> {
+    fn expr(&mut self) -> Result<Expr> {
         match self.token.kind {
-            TokenKind::Ident => {
-                self.definition()
+            TokenKind::If => {
+                self.cond()
+            }
+            TokenKind::Fn => {
+                self.lambda()
+            }
+            TokenKind::Lower if self.depth.is_empty() => {
+                self.top_level()
             }
             _ => {
-                Err(NitrineError::error(
-                    self.span(), "expected a constant or function definition".into()))
+                self.binary(0)
             }
         }
     }
 
-    fn definition(&mut self) -> Result<Node> {
-        let span = self.span();
+    fn top_level(&mut self) -> Result<Expr> {
+        let start = self.span();
 
-        let name = self.name()?;
+        let patt = Expr::Name(self.name()?);
 
-        let value = box if self.matches(TokenKind::OpeningParen) {
-            self.function()?
+        if self.matches(TokenKind::OpeningParen) {
+            let value = self.function()?;
+            Ok(Expr::Let(box Let { patt, value, span: self.complete(start) }))
         } else {
-            if !self.match_line() {
-                return Err(NitrineError::error(
-                    self.span(),
-                    "A constant definition expects the `=` to be in the same line".into()));
+            self.def(patt)
+        }
+    }
+
+    fn term(&mut self, apply: bool) -> Result<Expr> {
+        let mut term = match self.token.kind {
+            TokenKind::Lower => {
+                Expr::Name(self.name()?)
             }
-            self.eat(TokenKind::Equals)?;
-            self.expr()?
+            TokenKind::Upper => {
+                self.symbol()?
+            }
+            TokenKind::Number => {
+                self.number()?
+            }
+            TokenKind::String => {
+                self.string(TokenKind::String)?
+            }
+            TokenKind::StringStart => {
+                self.template()?
+            }
+            TokenKind::OpeningParen => {
+                self.parens()?
+            }
+            TokenKind::OpeningBrace => {
+                self.record()?
+            }
+            TokenKind::OpeningBracket => {
+                self.list()?
+            }
+            tk if tk.is_operator() => {
+                self.unary()?
+            }
+            _ => {
+                return Err(self.handle_unexpected())
+            }
         };
 
-        self.make(NodeKind::Let { name, value }, span)
-    }
-
-    fn function(&mut self) -> Result<Node> {
-
-        if !self.match_line() {
-            return Err(NitrineError::error(
-                self.span(),
-                "A function definition expects then opening parenthesis to be in the same line".into()));
+        while self.match_lines() {
+            term = match self.token.kind {
+                TokenKind::Equals
+              | TokenKind::Warlus => {
+                    self.def(term)?
+                }
+                TokenKind::Dot => {
+                    self.dot(term)?
+                }
+                TokenKind::Semi if !self.nesting(Nesting::Def) => {
+                    self.chain(term)?
+                }
+                _ => { break; }
+            }
         }
 
-        let span = self.span();
+        if apply {
+            self.apply(term)
+        } else {
+            Ok(term)
+        }
+    }
+
+    fn def(&mut self, patt: Expr) -> Result<Expr> {
+        let span = patt.span();
+
+        self.enter(Nesting::Def);
+
+        let mutable = self.matches(TokenKind::Warlus);
+        self.bump();
+
+        let value = self.expr()?;
+
+        self.exit(Nesting::Def)?;
+
+        if mutable {
+            Ok(Expr::Mut(box Mut { patt, value, span }))
+        } else {
+            Ok(Expr::Let(box Let { patt, value, span }))
+        }
+    }
+
+    fn dot(&mut self, mut expr: Expr) -> Result<Expr> {
+        let span = expr.span();
+
+        while self.maybe_eat(TokenKind::Dot) {
+            let name = self.name()?;
+                expr = Expr::Member(box Member { expr, name, span: self.complete(span) });
+        }
+
+        Ok(expr)
+    }
+
+    fn chain(&mut self, expr: Expr) -> Result<Expr> {
+        let span = expr.span();
+
+        let operator = Operator {
+            kind: TokenKind::Semi,
+            span
+        };
+
+        self.bump();
+
+        let rhs = self.expr()?;
+        let lhs = expr;
+
+        Ok(Expr::Binary(box Binary { operator, lhs, rhs, span: self.complete(span) }))
+    }
+
+    fn function(&mut self) -> Result<Expr> {
+        let start = self.span();
+
+        self.enter(Nesting::Fun);
 
         let parameters = self.block_of(
             TokenKind::OpeningParen,
@@ -94,146 +190,90 @@ impl<'s> Parser<'s> {
 
         self.eat(TokenKind::Equals)?;
 
-        let value = box self.expr()?;
+        let value = self.expr()?;
 
-        self.make(NodeKind::Function { parameters, value }, span)
+        self.exit(Nesting::Fun)?;
+
+        Ok(Expr::Fn(box Fn { parameters, value, span: self.complete(start) }))
     }
 
-    fn name(&mut self) -> Result<Name> {
-        let Token { span, .. } = self.eat(TokenKind::Ident)?;
+    fn symbol(&mut self) -> Result<Expr> {
+        let Token { span, .. } = self.eat(TokenKind::Upper)?;
+
         let name = self.source.content[span.range()].into();
-        Ok(Name { name, span })
-    }
+        let name = Name { name, span };
 
-    fn expr(&mut self) -> Result<Node> {
-        match self.token.kind {
-            TokenKind::Do => {
-                self.block()
-            }
-            TokenKind::If => {
-                self.cond()
-            }
-            TokenKind::Fn => {
-                self.lambda()
-            }
-            _ => {
-                self.binary(0)
-            }
+        if self.match_lines() && self.matches(TokenKind::Dot) {
+            self.dot(Expr::Name(name))
+        } else {
+            let values = self.args()?;
+            Ok(Expr::Symbol(Symbol { name, values, span: self.complete(span) }))
         }
     }
 
-    fn term(&mut self, apply: bool) -> Result<Node> {
-        match self.token.kind {
-            TokenKind::Ident => {
-                let term = self.ident()?;
-                if apply { self.apply(term) } else { Ok(term) }
-            }
-            TokenKind::Symbol => {
-                self.symbol()
-            }
-            TokenKind::Number => {
-                self.number()
-            }
-            TokenKind::String(_) => {
-                self.template()
-            }
-            TokenKind::True
-          | TokenKind::False => {
-                self.boolean()
-            }
-            TokenKind::OpeningParen => {
-                let term = self.parens()?;
-                if apply { self.apply(term) } else { Ok(term) }
-            }
-            TokenKind::OpeningBrace => {
-                self.object()
-            }
-            TokenKind::OpeningBracket => {
-                self.list()
-            }
-            tk if tk.is_prefix() => {
-                self.unary()
-            }
-            _ => {
-                return Err(self.handle_unexpected())
-            }
-        }
-    }
+    fn args(&mut self) -> Result<Vec<Expr>> {
+        let mut args = vec![];
 
-    fn apply(&mut self, callee: Node) -> Result<Node> {
-        let mut arguments = vec![];
-
-        loop {
-            if !self.match_line() {
-                break;
-            }
-
+        while self.match_lines() {
             match self.token.kind {
-                TokenKind::Ident
-              | TokenKind::Symbol
+                TokenKind::Lower
+              | TokenKind::Upper
               | TokenKind::Number
-              | TokenKind::String(_)
-              | TokenKind::True
-              | TokenKind::False
+              | TokenKind::StringStart
+              | TokenKind::String
               | TokenKind::OpeningParen
               | TokenKind::OpeningBrace
               | TokenKind::OpeningBracket => {
-                    arguments.push(self.term(false)?)
+                    args.push(self.term(false)?)
                 }
                 _ => { break; }
             }
         }
 
+        Ok(args)
+    }
+
+    fn apply(&mut self, function: Expr) -> Result<Expr> {
+        let span = function.span();
+
+        let arguments = self.args()?;
+
         if arguments.is_empty() {
-            Ok(callee)
+            Ok(function)
         } else {
-            let span = callee.span;
-            self.make(NodeKind::Apply { function: box callee, arguments }, span)
+            Ok(Expr::Apply(box Apply { function, arguments, span: self.complete(span) }))
         }
     }
 
-    fn ident(&mut self) -> Result<Node> {
-        let span = self.span();
-        let name = self.name()?;
-        self.make(NodeKind::Name { name }, span)
-    }
+    fn template(&mut self) -> Result<Expr> {
+        let start = self.span();
 
-    fn symbol(&mut self) -> Result<Node> {
-        let Token { span, .. } = self.eat(TokenKind::Symbol)?;
-
-        let name = self.source.content[span.range()].to_string();
-        let name = Name { name, span };
-
-        self.make(NodeKind::Symbol { name }, span)
-    }
-
-    fn template(&mut self) -> Result<Node> {
-        let span = self.span();
-
-        let mut parts = vec![];
+        let mut elements = vec![];
 
         loop {
             match self.token.kind {
-                TokenKind::String(done) => {
-                    parts.push(self.string(done)?);
-                    if done {
-                        break;
-                    }
+                TokenKind::StringFinish => {
+                    elements.push(self.string(self.token.kind)?);
+                    break;
+                }
+                TokenKind::StringStart
+              | TokenKind::StringFragment => {
+                    elements.push(self.string(self.token.kind)?);
                 }
                 TokenKind::OpeningBrace => {
                     self.eat(TokenKind::OpeningBrace)?;
-                    parts.push(self.expr()?);
+                    elements.push(self.expr()?);
                     self.eat(TokenKind::ClosingBrace)?;
                 }
                 _ => { break; }
             }
         }
 
-        let parts = parts
+        let elements = elements
             .into_iter()
             .filter(|part| {
-                match part.kind {
-                    NodeKind::String { ref value } if value.is_empty() => {
+                match part {
+                    Expr::String(ref s) if s.value.is_empty() => {
                         false
                     }
                     _ => true
@@ -241,101 +281,99 @@ impl<'s> Parser<'s> {
             })
             .collect();
 
-        self.make(NodeKind::Template { parts }, span)
+        Ok(Expr::Template(Template { elements, span: self.complete(start) }))
     }
 
-    fn string(&mut self, done: bool) -> Result<Node> {
-        let Token { span, .. } = self.eat(TokenKind::String(done))?;
+    fn string(&mut self, kind: TokenKind) -> Result<Expr> {
+        let Token { span, .. } = self.eat(kind)?;
 
-        let string = NodeKind::String {
-            value: self.source.content[span.range()].into()
+        let raw = self.source.content[span.range()].to_string();
+
+        let value = match kind {
+            TokenKind::String => {
+                raw[1 .. raw.len() - 1].to_string()
+            }
+            TokenKind::StringStart => {
+                raw[1 ..].to_string()
+            }
+            TokenKind::StringFinish => {
+                raw[.. raw.len() - 1].to_string()
+            }
+            _ => raw
         };
 
-        self.make(string, span)
+        Ok(Expr::String(Literal { value, span }))
     }
 
-    fn number(&mut self) -> Result<Node> {
+    fn number(&mut self) -> Result<Expr> {
         let Token { span, .. } = self.eat(TokenKind::Number)?;
 
         let value = self.source.content[span.range()].to_string();
 
-        let number = if value.contains(".") {
-            NodeKind::Float { value: value.parse().unwrap() }
+        if value.contains(".") {
+            Ok(Expr::Float(Literal { value: value.parse().unwrap(), span }))
         } else {
-            NodeKind::Integer { value: value.parse().unwrap() }
-        };
-
-        self.make(number, span)
+            Ok(Expr::Integer(Literal { value: value.parse().unwrap(), span }))
+        }
     }
 
-    fn boolean(&mut self) -> Result<Node> {
-        let span = self.span();
+    fn list(&mut self) -> Result<Expr> {
+        let start = self.span();
 
-        let boolean = NodeKind::Bool {
-            value: self.matches(TokenKind::True)
-        };
-
-        self.bump();
-
-        self.make(boolean, span)
-    }
-
-    fn list(&mut self) -> Result<Node> {
-        let span = self.span();
+        self.enter(Nesting::Bracket);
 
         let items = self.block_of(
             TokenKind::OpeningBracket,
             TokenKind::ClosingBracket,
             Self::expr)?;
 
-        self.make(NodeKind::List { items }, span)
+        self.exit(Nesting::Bracket)?;
+
+        Ok(Expr::List(List { items, span: self.complete(start) }))
     }
 
-    fn parens(&mut self) -> Result<Node> {
-        let span = self.span();
+    fn parens(&mut self) -> Result<Expr> {
+        let start = self.span();
 
-        let items = self.block_of(
+        self.enter(Nesting::Paren);
+
+        let mut items = self.block_of(
             TokenKind::OpeningParen,
             TokenKind::ClosingParen,
             Self::expr)?;
 
-        if items.len() == 1 {
-            Ok(items.into_iter().next().unwrap())
+        self.exit(Nesting::Paren)?;
+
+        if items.is_empty() {
+            Ok(Expr::Unit(self.complete(start)))
+        } else if items.len() == 1 {
+            Ok(items.pop().unwrap())
         } else {
-            self.make(NodeKind::Tuple { items }, span)
+            Ok(Expr::Tuple(Tuple { items, span: self.complete(start) }))
         }
     }
 
-    fn object(&mut self) -> Result<Node> {
-        let span = self.span();
+    fn record(&mut self) -> Result<Expr> {
+        let start = self.span();
 
-        self.eat(TokenKind::OpeningBrace)?;
+        self.enter(Nesting::Brace);
 
-        let mut properties = vec![];
+        let properties = self.block_of(
+            TokenKind::OpeningBrace,
+            TokenKind::ClosingBrace,
+            Self::property)?;
 
-        loop {
-            if self.matches(TokenKind::ClosingBrace) {
-                break;
-            }
+        self.exit(Nesting::Brace)?;
 
-            properties.push(self.property()?);
-
-            if !self.maybe_eat(TokenKind::Comma) {
-                break;
-            }
-        }
-
-        self.eat(TokenKind::ClosingBrace)?;
-
-        self.make(NodeKind::Object { properties }, span)
+        Ok(Expr::Record(Record { properties, span: self.complete(start) }))
     }
 
-    fn property(&mut self) -> Result<(Name, Option<Node>)> {
+    fn property(&mut self) -> Result<(Name, Option<Expr>)> {
         let key = self.name()?;
 
         if !self.matches(TokenKind::Comma)
         && !self.matches(TokenKind::ClosingBrace)
-        && !self.match_line()
+        && !self.match_lines()
         {
             return Err(NitrineError::error(
                 self.span(),
@@ -359,43 +397,42 @@ impl<'s> Parser<'s> {
         Ok((key, val))
     }
 
-    fn unary(&mut self) -> Result<Node> {
-        let span = self.span();
+    fn unary(&mut self) -> Result<Expr> {
+        let Token { kind, span } = self.token;
 
-        let kind = match self.token.kind {
-            TokenKind::Not    => OperatorKind::Not,
-            TokenKind::Sub    => OperatorKind::Neg,
-            TokenKind::Add    => OperatorKind::Pos,
-            TokenKind::BitNot => OperatorKind::BitNot,
-            _ => {
-                return Err(NitrineError::error(
-                    self.span(),
-                    format!("Operator `{}` is not a valid unary (prefix) operator", self.token.kind)));
-            }
-        };
+        let operator = self.operator(kind, span)?;
 
-        let operator = Operator { kind, span };
+        if self.prev.kind == TokenKind::OpeningParen
+        && self.peek.kind == TokenKind::ClosingParen {
+            self.bump();
+            return Ok(Expr::Operator(operator));
+        }
 
         self.bump();
 
-        let rhs = box self.term(false)?;
+        if !self.match_lines() {
+            return Err(NitrineError::error(
+                self.span(),
+                "Unary (infix) or partial operators must be in the same line as the operand".into()))
+        }
 
-        self.make(NodeKind::Unary { operator, rhs }, span)
+        let rhs = self.term(false)?;
+        Ok(Expr::Unary(box Unary { operator, rhs, span: self.complete(span) }))
     }
 
-    fn binary(&mut self, required_precedence: u8) -> Result<Node> {
+    fn binary(&mut self, minimum_precedence: u8) -> Result<Expr> {
         let mut lhs = self.term(true)?;
 
         while let Some((precedence, associativity)) = self.token.kind.precedence() {
-            if precedence < required_precedence {
+
+            if precedence < minimum_precedence {
                 break;
             }
 
             let Token { kind, span } = self.token;
+            self.bump();
 
             let operator = self.operator(kind, span)?;
-
-            self.bump();
 
             let fix = match associativity {
                 Associativity::Right => 0,
@@ -403,116 +440,84 @@ impl<'s> Parser<'s> {
                 Associativity::None  => 1,
             };
 
-            let rhs = self.binary(precedence + fix)?;
+            let function = Expr::Operator(operator);
 
-            let span = lhs.span;
+            let span = lhs.span();
 
-            lhs = self.make(NodeKind::Binary { operator, lhs: box lhs, rhs: box rhs }, span)?;
+            let arguments = vec![
+                lhs,
+                self.binary(precedence + fix)?
+            ];
+
+            lhs = Expr::Apply(box Apply { function, arguments, span: self.complete(span) });
         }
 
         Ok(lhs)
     }
 
     fn operator(&self, kind: TokenKind, span: Span) -> Result<Operator> {
-        let kind = match kind {
-            TokenKind::Add => OperatorKind::Add,
-            TokenKind::Sub => OperatorKind::Sub,
-            TokenKind::Mul => OperatorKind::Mul,
-            TokenKind::Div => OperatorKind::Div,
-            TokenKind::Rem => OperatorKind::Rem,
-            TokenKind::Concat => OperatorKind::Concat,
-            TokenKind::BitAnd => OperatorKind::BitAnd,
-            TokenKind::BitOr  => OperatorKind::BitOr,
-            TokenKind::BitXor => OperatorKind::BitXor,
-            TokenKind::BitShr => OperatorKind::BitShr,
-            TokenKind::BitShl => OperatorKind::BitShl,
-            TokenKind::BitNot => OperatorKind::BitNot,
-            TokenKind::And => OperatorKind::And,
-            TokenKind::Or  => OperatorKind::Or,
-            TokenKind::Is  => OperatorKind::Is,
-            TokenKind::Not => OperatorKind::Not,
-            TokenKind::Eq  => OperatorKind::Eq,
-            TokenKind::Ne  => OperatorKind::Ne,
-            TokenKind::Lt  => OperatorKind::Lt,
-            TokenKind::Le  => OperatorKind::Le,
-            TokenKind::Gt  => OperatorKind::Gt,
-            TokenKind::Ge  => OperatorKind::Ge,
-            TokenKind::Pipe   => OperatorKind::Pipe,
-            TokenKind::Semi   => OperatorKind::Chain,
-            TokenKind::Dot    => OperatorKind::Member,
-            TokenKind::Equals => OperatorKind::Let,
-            TokenKind::Warlus => OperatorKind::Mut,
-            TokenKind::AddEq => OperatorKind::MutAdd,
-            TokenKind::SubEq => OperatorKind::MutSub,
-            TokenKind::MulEq => OperatorKind::MutMul,
-            TokenKind::DivEq => OperatorKind::MutDiv,
-            TokenKind::RemEq => OperatorKind::MutRem,
-            TokenKind::ConcatEq => OperatorKind::MutConcat,
-            TokenKind::BitAndEq => OperatorKind::MutBitAnd,
-            TokenKind::BitOrEq  => OperatorKind::MutBitOr,
-            TokenKind::BitXorEq => OperatorKind::MutBitXor,
-            TokenKind::BitShrEq => OperatorKind::MutBitShr,
-            TokenKind::BitShlEq => OperatorKind::MutBitShl,
+        match kind {
+            TokenKind::Add
+          | TokenKind::Sub
+          | TokenKind::Mul
+          | TokenKind::Div
+          | TokenKind::Rem
+          | TokenKind::Concat
+          | TokenKind::BitAnd
+          | TokenKind::BitOr
+          | TokenKind::BitXor
+          | TokenKind::BitShr
+          | TokenKind::BitShl
+          | TokenKind::BitNot
+          | TokenKind::And
+          | TokenKind::Or
+          | TokenKind::Not
+          | TokenKind::Is
+          | TokenKind::Eq
+          | TokenKind::Ne
+          | TokenKind::Lt
+          | TokenKind::Le
+          | TokenKind::Gt
+          | TokenKind::Ge
+          | TokenKind::Pipe => Ok(Operator { kind, span }),
             _ => {
                 return Err(NitrineError::error(
                     span,
-                    format!("Operator `{}` is not a valid binary (infix) operator", self.token.kind)));
+                    format!("Operator `{}` is not a valid binary (infix) operator", kind)));
             }
-        };
-
-        Ok(Operator { kind, span })
-    }
-
-    fn block(&mut self) -> Result<Node> {
-        let span = self.span();
-
-        self.eat(TokenKind::Do)?;
-        self.eat(TokenKind::OpeningBrace)?;
-
-        let mut items = vec![];
-
-        loop {
-            if self.matches(TokenKind::ClosingBrace) {
-                break;
-            }
-            items.push(self.expr()?);
         }
-
-        self.eat(TokenKind::ClosingBrace)?;
-
-        self.make(NodeKind::Block { items }, span)
     }
 
-    fn cond(&mut self) -> Result<Node> {
+    fn cond(&mut self) -> Result<Expr> {
         let span = self.span();
 
         self.eat(TokenKind::If)?;
-        let test = box self.expr()?;
+        let test = self.expr()?;
 
-        let then = if self.matches(TokenKind::Do) {
-            box self.block()?
-        } else {
-            self.eat(TokenKind::Then)?;
-            box self.expr()?
-        };
+        self.eat(TokenKind::Then)?;
+        let then = self.expr()?;
 
         self.eat(TokenKind::Else)?;
-        let otherwise = box self.expr()?;
+        let otherwise = self.expr()?;
 
-        self.make(NodeKind::If { test, then, otherwise }, span)
+        Ok(Expr::If(box If { test, then, otherwise, span: self.complete(span) }))
     }
 
-    fn lambda(&mut self) -> Result<Node> {
+    fn lambda(&mut self) -> Result<Expr> {
         let span = self.span();
+
+        self.enter(Nesting::Fun);
 
         let parameters = self.block_of(
             TokenKind::Fn,
             TokenKind::Arrow,
             Self::name)?;
 
-        let value = box self.expr()?;
+        let value = self.expr()?;
 
-        self.make(NodeKind::Function { parameters, value }, span)
+        self.exit(Nesting::Fun)?;
+
+        Ok(Expr::Fn(box Fn { parameters, value, span: self.complete(span) }))
     }
 
     fn block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
@@ -541,8 +546,8 @@ impl<'s> Parser<'s> {
         Ok(result)
     }
 
-    fn make(&self, kind: NodeKind, span: Span) -> Result<Node> {
-        Ok(Node { kind, span: span.to(self.prev.span) })
+    fn complete(&self, start: Span) -> Span {
+        start.to(self.prev.span)
     }
 
     fn bump(&mut self) {
@@ -589,8 +594,25 @@ impl<'s> Parser<'s> {
         self.token.span
     }
 
-    fn match_line(&self) -> bool {
-        self.token.span.line == self.prev.span.line
+    fn match_lines(&self) -> bool {
+        self.prev.span.line == self.token.span.line
+    }
+
+    fn enter(&mut self, nesting: Nesting) {
+        self.depth.push(nesting)
+    }
+
+    fn exit(&mut self, nesting: Nesting) -> Result<()> {
+        if !self.nesting(nesting) {
+            return Err(NitrineError::basic("Compiler Error: Invalid nesting order".into()))
+        }
+
+        self.depth.pop();
+        Ok(())
+    }
+
+    fn nesting(&self, nesting: Nesting) -> bool {
+        self.depth.last().map(|it| it == &nesting).unwrap_or(false)
     }
 
     fn handle_unexpected(&mut self) -> NitrineError {
@@ -600,7 +622,7 @@ impl<'s> Parser<'s> {
             TokenKind::Error(TokenKindError::InvalidCharacter)
           | TokenKind::Error(TokenKindError::InvalidEscape)
           | TokenKind::Error(TokenKindError::InvalidOperator)
-          | TokenKind::Error(TokenKindError::Unterminated) => {
+          | TokenKind::Error(TokenKindError::UnterminatedString) => {
                 format!("{}", kind)
             }
             _ => format!("Unexpected `{}`", kind)
@@ -608,4 +630,23 @@ impl<'s> Parser<'s> {
 
         NitrineError::error(span, msg)
     }
+}
+
+pub fn parse<'s>(source: &'s Source) -> Result<Module> {
+    let mut parser = Parser::new(source);
+
+    let mut nodes = vec![];
+
+    while !parser.done() {
+        nodes.push(parser.expr()?);
+    }
+
+    let name = source.path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    Ok(Module { name, nodes })
 }

@@ -1,4 +1,4 @@
-use nitrine::{Source, parser::Parser};
+use nitrine::{Source, parser::parse};
 
 use std::path::PathBuf;
 use std::fs;
@@ -49,7 +49,7 @@ fn read_line() -> Result<String, ()> {
 }
 
 fn exec(source: Source) {
-    match Parser::new(&source).parse() {
+    match parse(&source) {
         Ok(ast) => {
             println!("{:#?}", ast);
         }

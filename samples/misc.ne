@@ -1,11 +1,5 @@
-hello() =
-  print "Hello, World"
-
-
-greet() =
-  print "Your name?";
-  name = read "> ";
-  print "Hi! {name}"
+hello(name) =
+  print "Hello, {name}!"
 
 
 fizzbuzz() =
@@ -31,7 +25,12 @@ factorial(n) =
 counter() =
   count := 0;
   div [
-    button "+" { click() = count += 1 },
+    button "+" { click() = count := count + 1 },
     p ["total ", strong "{count}"],
-    button "-" { click() = count -= 1 },
+    button "-" { click() = count := count - 1 },
   ]
+
+
+sum = fold (+) 0
+
+total = sum (range 1 100)
