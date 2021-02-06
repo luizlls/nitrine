@@ -41,11 +41,9 @@ pub enum Expr {
 
     Variant(Variant),
 
-    Integer(Literal<i64>),
+    Number(Literal),
 
-    Number(Literal<f64>),
-
-    String(Literal<String>),
+    String(Literal),
 
     Template(Template),
 }
@@ -116,7 +114,7 @@ pub struct Block {
 pub struct If {
     pub test: Box<Expr>,
     pub then: Box<Expr>,
-    pub otherwise: Box<Expr>,
+    pub other: Box<Expr>,
     pub span: Span,
 }
 
@@ -146,8 +144,8 @@ pub struct Member {
 }
 
 #[derive(Debug, Clone)]
-pub struct Literal<T: Debug + Clone> {
-    pub value: T,
+pub struct Literal {
+    pub value: String,
     pub span: Span,
 }
 
@@ -182,7 +180,6 @@ impl Expr {
             Expr::Record(expr) => expr.span,
             Expr::Member(expr) => expr.span,
             Expr::Variant(expr) => expr.span,
-            Expr::Integer(expr) => expr.span,
             Expr::Number(expr) => expr.span,
             Expr::String(expr) => expr.span,
             Expr::Template(expr) => expr.span,

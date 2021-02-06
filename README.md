@@ -9,10 +9,10 @@
 - [X] AST
 - [X] Lexer
 - [X] Parser
-- [ ] IR?
-- [ ] WASM?
-- [ ] JavaScript
+- [X] Hir
+- [X] JavaScript
 - [ ] VM?
+- [ ] WASM?
 
 
 &nbsp;

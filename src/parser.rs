@@ -1,5 +1,5 @@
 use crate::{Source, Span};
-use crate::syntax::*;
+use crate::ast::*;
 use crate::token::{Token, TokenKind, TokenKindError, Associativity};
 use crate::lexer::Lexer;
 use crate::error::{Result, NitrineError};
@@ -290,15 +290,11 @@ impl<'s> Parser<'s> {
     }
 
     fn number(&mut self) -> Result<Expr> {
-        let Token { span, .. } = self.eat(TokenKind::Number)?;
-
+        let span = self.token.span;
+        self.eat(TokenKind::Number)?;
         let value = self.source.content[span.range()].to_string();
 
-        if value.contains(".") {
-            Ok(Expr::Number(Literal { value: value.parse().unwrap(), span }))
-        } else {
-            Ok(Expr::Integer(Literal { value: value.parse().unwrap(), span }))
-        }
+        Ok(Expr::Number(Literal { value, span }))
     }
 
     fn list(&mut self) -> Result<Expr> {
@@ -468,9 +464,9 @@ impl<'s> Parser<'s> {
         let then = box self.expr()?;
 
         self.eat(TokenKind::Else)?;
-        let otherwise = box self.expr()?;
+        let other = box self.expr()?;
 
-        Ok(Expr::If(If { test, then, otherwise, span: self.complete(span) }))
+        Ok(Expr::If(If { test, then, other, span: self.complete(span) }))
     }
 
     fn lambda(&mut self) -> Result<Expr> {

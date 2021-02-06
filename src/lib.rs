@@ -4,7 +4,9 @@
 #![macro_use]
 
 pub mod compiler;
-pub mod syntax;
+pub mod analysis;
+pub mod ast;
+pub mod hir;
 pub mod token;
 pub mod lexer;
 pub mod parser;
