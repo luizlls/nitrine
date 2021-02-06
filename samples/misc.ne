@@ -22,8 +22,8 @@ factorial(n) =
   if n <= 1 then 1 else n * factorial (n - 1)
 
 
-counter() =
-  count := 0;
+counter() = do
+  counter := 0;
   div [
     button "+" { click() = count := count + 1 },
     p ["total ", strong "{count}"],
@@ -31,6 +31,6 @@ counter() =
   ]
 
 
-sum = fold (+) 0
+sum  = fold (+) 0
 
-total = sum (range 1 100)
+prod = fold (*) 1
