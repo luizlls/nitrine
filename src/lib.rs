@@ -3,7 +3,8 @@
 #![feature(try_trait)]
 #![macro_use]
 
-pub mod ast;
+pub mod compiler;
+pub mod syntax;
 pub mod token;
 pub mod lexer;
 pub mod parser;
@@ -30,7 +31,7 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, Hash)]
 pub struct Span {
     line: u32,
     start: u32,
@@ -50,9 +51,5 @@ impl Span {
 
     pub const fn range(self) -> Range<usize> {
         (self.start as usize) .. (self.end as usize)
-    }
-
-    pub fn trim_end(self) -> Span {
-        Span::new(self.line, self.start, self.end - 1)
     }
 }

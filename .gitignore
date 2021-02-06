@@ -1,3 +1,5 @@
 /target
 
-*.txt
+output.txt
+output.js
+output.json
