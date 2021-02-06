@@ -25,9 +25,9 @@ factorial(n) =
 counter() = do
   counter := 0;
   div [
-    button "+" { click() = count := count + 1 },
-    p ["total ", strong "{count}"],
-    button "-" { click() = count := count - 1 },
+    button "+" { click() = counter := counter + 1 },
+    p ["total ", strong "{counter}"],
+    button "-" { click() = counter := counter - 1 },
   ]
 
 

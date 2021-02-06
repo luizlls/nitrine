@@ -1,4 +1,4 @@
-use nitrine::{Source, parser::parse};
+use nitrine::{Source, parser::parse, compiler::compile};
 
 use std::path::PathBuf;
 use std::fs;
@@ -49,9 +49,10 @@ fn read_line() -> Result<String, ()> {
 }
 
 fn exec(source: Source) {
-    match parse(&source) {
-        Ok(ast) => {
-            println!("{:#?}", ast);
+    let pipeline = parse(&source).and_then(compile);
+    match pipeline {
+        Ok(code) => {
+            println!("{}", code)
         }
         Err(error) => {
             eprintln!("{}", error);

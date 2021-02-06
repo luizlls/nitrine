@@ -39,7 +39,7 @@ pub enum Expr {
 
     Member(Member),
 
-    Symbol(Symbol),
+    Variant(Variant),
 
     Integer(Literal<i64>),
 
@@ -52,7 +52,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone)]
 pub struct Name {
-    pub name: String,
+    pub value: String,
     pub span: Span,
 }
 
@@ -158,7 +158,7 @@ pub struct Template {
 }
 
 #[derive(Debug, Clone)]
-pub struct Symbol {
+pub struct Variant {
     pub name: Name,
     pub values: Vec<Expr>,
     pub span: Span,
@@ -181,7 +181,7 @@ impl Expr {
             Expr::List(expr) => expr.span,
             Expr::Record(expr) => expr.span,
             Expr::Member(expr) => expr.span,
-            Expr::Symbol(expr) => expr.span,
+            Expr::Variant(expr) => expr.span,
             Expr::Integer(expr) => expr.span,
             Expr::Number(expr) => expr.span,
             Expr::String(expr) => expr.span,
@@ -205,6 +205,13 @@ pub enum OperatorKind {
     Mul,
     Div,
     Rem,
+    Concat,
+    BitAnd,
+    BitOr,
+    BitNot,
+    BitXor,
+    BitShl,
+    BitShr,
     Eq,
     Ne,
     Lt,
@@ -217,13 +224,6 @@ pub enum OperatorKind {
     Is,
     IsNot,
     Pipe,
-    Concat,
-    BitAnd,
-    BitOr,
-    BitNot,
-    BitXor,
-    BitShl,
-    BitShr,
 }
 
 impl fmt::Display for Operator {

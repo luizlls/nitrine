@@ -158,7 +158,11 @@ impl<'src> Lexer<'src> {
                 Some('"') => {
                     self.mode = Mode::Regular;
                     self.bump();
-                    return Some(if start { TokenKind::String } else { TokenKind::StringFinish });
+                    return if start {
+                        Some(TokenKind::String)
+                    } else {
+                        Some(TokenKind::StringEnd)
+                    };
                 }
                 Some('{') if self.peek == Some('{') => {
                     self.bump();
@@ -167,7 +171,11 @@ impl<'src> Lexer<'src> {
                 Some('{') => {
                     self.mode = Mode::Template;
                     // self.bump();
-                    return Some(if start { TokenKind::StringStart } else { TokenKind::StringFragment });
+                    return if start {
+                        Some(TokenKind::StringStart)
+                    } else {
+                        Some(TokenKind::StringFragment)
+                    };
                 }
                 Some('\n') |
                 None => {

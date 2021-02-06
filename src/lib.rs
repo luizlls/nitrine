@@ -3,7 +3,8 @@
 #![feature(try_trait)]
 #![macro_use]
 
-pub mod ast;
+pub mod compiler;
+pub mod syntax;
 pub mod token;
 pub mod lexer;
 pub mod parser;

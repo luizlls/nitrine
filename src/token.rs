@@ -63,7 +63,7 @@ pub enum TokenKind {
     Number,
     String,
     StringStart,
-    StringFinish,
+    StringEnd,
     StringFragment,
     // string template
 
@@ -248,7 +248,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Ge => write!(f, ">="),
             TokenKind::String => write!(f, "string"),
             TokenKind::StringStart => write!(f, "start of string template"),
-            TokenKind::StringFinish => write!(f, "end of string template"),
+            TokenKind::StringEnd => write!(f, "end of string template"),
             TokenKind::StringFragment => write!(f, "fragment of string template"),
             TokenKind::Number => write!(f, "number"),
             TokenKind::Lower => write!(f, "lowercase identifier"),

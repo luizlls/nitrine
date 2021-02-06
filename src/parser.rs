@@ -1,5 +1,5 @@
 use crate::{Source, Span};
-use crate::ast::*;
+use crate::syntax::*;
 use crate::token::{Token, TokenKind, TokenKindError, Associativity};
 use crate::lexer::Lexer;
 use crate::error::{Result, NitrineError};
@@ -47,8 +47,8 @@ impl<'s> Parser<'s> {
         let span = self.token.span;
         self.eat(TokenKind::Lower)?;
         let name = self.source.content[span.range()].into();
-        
-        Ok(Name { name, span })
+
+        Ok(Name { value: name, span })
     }
 
     fn expr(&mut self) -> Result<Expr> {
@@ -185,13 +185,13 @@ impl<'s> Parser<'s> {
         let Token { span, .. } = self.eat(TokenKind::Upper)?;
 
         let name = self.source.content[span.range()].into();
-        let name = Name { name, span };
+        let name = Name { value: name, span };
 
         if self.match_lines() && self.matches(TokenKind::Dot) {
             self.dot(Expr::Name(name))
         } else {
             let values = self.args()?;
-            Ok(Expr::Symbol(Symbol { name, values, span: self.complete(span) }))
+            Ok(Expr::Variant(Variant { name, values, span: self.complete(span) }))
         }
     }
 
@@ -236,7 +236,7 @@ impl<'s> Parser<'s> {
 
         loop {
             match self.token.kind {
-                TokenKind::StringFinish => {
+                TokenKind::StringEnd => {
                     elements.push(self.string(self.token.kind)?);
                     break;
                 }
@@ -280,7 +280,7 @@ impl<'s> Parser<'s> {
             TokenKind::StringStart => {
                 raw[1 ..].to_string()
             }
-            TokenKind::StringFinish => {
+            TokenKind::StringEnd => {
                 raw[.. raw.len() - 1].to_string()
             }
             _ => raw
@@ -377,7 +377,7 @@ impl<'s> Parser<'s> {
         if self.prev.kind == TokenKind::OpeningParen
         && self.peek.kind == TokenKind::ClosingParen {
             self.bump();
-            return Ok(Expr::Name(Name { name: format!("{}", operator), span }));
+            return Ok(Expr::Name(Name { value: format!("{}", operator).to_lowercase(), span }));
         }
 
         self.bump();
@@ -433,10 +433,10 @@ impl<'s> Parser<'s> {
           | TokenKind::Concat => OperatorKind::Concat,
           | TokenKind::BitAnd => OperatorKind::BitAnd,
           | TokenKind::BitOr  => OperatorKind::BitOr,
+          | TokenKind::BitNot => OperatorKind::BitNot,
           | TokenKind::BitXor => OperatorKind::BitXor,
           | TokenKind::BitShr => OperatorKind::BitShr,
           | TokenKind::BitShl => OperatorKind::BitShl,
-          | TokenKind::BitNot => OperatorKind::BitNot,
           | TokenKind::And => OperatorKind::And,
           | TokenKind::Or  => OperatorKind::Or,
           | TokenKind::Not => OperatorKind::Not,
