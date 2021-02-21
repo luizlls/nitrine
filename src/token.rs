@@ -27,8 +27,10 @@ pub enum TokenKind {
 
     // keywords
     Do,
-    If,
     Fn,
+    Let,
+    Mut,
+    If,
     Then,
     Else,
 
@@ -40,15 +42,15 @@ pub enum TokenKind {
     Rem,     // %
     And,     // and
     Or,      // or
+    Not,     // not
+    Is,      // is
+    Concat,  // ++
     BitAnd,  // &&&
     BitOr,   // |||
+    BitNot,  // ~~~
     BitXor,  // ^^^
     BitShr,  // >>>
     BitShl,  // <<<
-    Concat,  // ++
-    Not,     // not
-    BitNot,  // ~~~
-    Is,      // is
     Eq,      // ==
     Ne,      // !=
     Lt,      // <
@@ -92,10 +94,12 @@ impl Default for TokenKind {
 pub fn get_keyword(key: &str) -> Option<TokenKind> {
     match key {
         "do"    => Some(TokenKind::Do),
+        "fn"    => Some(TokenKind::Fn),
+        "let"   => Some(TokenKind::Let),
+        "mut"   => Some(TokenKind::Mut),
         "if"    => Some(TokenKind::If),
         "then"  => Some(TokenKind::Then),
         "else"  => Some(TokenKind::Else),
-        "fn"    => Some(TokenKind::Fn),
         "is"    => Some(TokenKind::Is),
         "and"   => Some(TokenKind::And),
         "or"    => Some(TokenKind::Or),
@@ -218,14 +222,17 @@ impl fmt::Display for TokenKind {
             TokenKind::Arrow => write!(f, "->"),
             TokenKind::Equals => write!(f, "="),
             TokenKind::Warlus => write!(f, ":="),
-            TokenKind::Fn => write!(f, "fn"),
             TokenKind::Do => write!(f, "do"),
+            TokenKind::Fn => write!(f, "fn"),
+            TokenKind::Let => write!(f, "let"),
+            TokenKind::Mut => write!(f, "mut"),
             TokenKind::If => write!(f, "if"),
             TokenKind::Then => write!(f, "then"),
             TokenKind::Else => write!(f, "else"),
             TokenKind::And => write!(f, "and"),
             TokenKind::Or => write!(f, "or"),
             TokenKind::Not => write!(f, "not"),
+            TokenKind::Is => write!(f, "is"),
             TokenKind::Add => write!(f, "+"),
             TokenKind::Sub => write!(f, "-"),
             TokenKind::Mul => write!(f, "*"),
@@ -239,7 +246,6 @@ impl fmt::Display for TokenKind {
             TokenKind::BitShr => write!(f, ">>>"),
             TokenKind::BitShl => write!(f, "<<<"),
             TokenKind::Pipe => write!(f, "|>"),
-            TokenKind::Is => write!(f, "is"),
             TokenKind::Eq => write!(f, "=="),
             TokenKind::Ne => write!(f, "!="),
             TokenKind::Lt => write!(f, "<"),

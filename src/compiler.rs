@@ -20,9 +20,9 @@ impl Compiler {
 
     fn compile_node(&mut self, node: Node) -> Result<String> {
         match node {
-            Node::Name(node) => self.compile_name(node),
+            Node::Var(node) => self.compile_var(node),
             Node::Fun(node) => self.compile_fun(node),
-            Node::Let(node) => self.compile_let(node),
+            Node::Def(node) => self.compile_def(node),
             Node::Set(node) => self.compile_set(node),
             Node::Get(node) => self.compile_get(node),
             Node::Apply(node) => self.compile_apply(node),
@@ -33,52 +33,54 @@ impl Compiler {
             Node::Variant(node) => self.compile_variant(node),
             Node::String(node) => self.compile_string(node),
             Node::Number(node) => self.compile_number(node),
-            Node::Unit(_) => Ok("".into())
+            Node::Template(node) => self.compile_template(node),
+            Node::Unit => Ok("".into())
         }
     }
 
+    fn compile_var(&mut self, var: String) -> Result<String> {
+        Ok(var)
+    }
+
     fn compile_fun(&mut self, function: Fun) -> Result<String> {
-        Ok(format!("function({}) {{ {}; }}", function.param.value, self.compile_body(*function.value)?))
+        Ok(format!("function({}) {{ {}; }}", function.param, self.compile_body(*function.value)?))
     }
 
     fn compile_body(&mut self, body: Node) -> Result<String> {
         match body {
-          Node::Let(decl) => self.compile_let(decl),
-          Node::Set(decl) => self.compile_set(decl),
+          Node::Def(def) => self.compile_def(def),
+          Node::Set(set) => self.compile_set(set),
           _ => {
             Ok(format!("return {}", self.compile_node(body)?))
           }
         }
     }
 
-    fn compile_name(&mut self, name: Name) -> Result<String> {
-        Ok(name.value)
-    }
-
-    fn compile_let(&mut self, l: Let) -> Result<String> {
-        Ok(format!("var {} = {};", l.name.value, self.compile_node(*l.value)?))
+    fn compile_def(&mut self, def: Def) -> Result<String> {
+        Ok(format!("var {} = {}", def.name, self.compile_node(*def.value)?))
     }
 
     fn compile_set(&mut self, set: Set) -> Result<String> {
-        Ok(format!("{} = {};", set.name.value, self.compile_node(*set.value)?))
+        Ok(format!("{} = {}", set.name, self.compile_node(*set.value)?))
+    }
+
+    fn compile_get(&mut self, get: Get) -> Result<String> {
+        Ok(format!("{}.{}", self.compile_node(*get.node)?, get.name))
     }
 
     fn compile_apply(&mut self, app: Apply) -> Result<String> {
-        let args: Result<Vec<_>> = app.args
-            .into_iter()
-            .map(|arg| Ok(format!("({})", self.compile_node(arg)?)))
-            .collect();
-
-        Ok(format!("{}{}", self.compile_node(*app.fun)?, args?.join("")))
+        let fun = self.compile_node(*app.fun)?;
+        let arg = self.compile_node(*app.arg)?;
+        Ok(format!("{}({})", fun, arg))
     }
 
     fn compile_block(&mut self, block: Block) -> Result<String> {
-        let items: Result<Vec<_>> = block.items
+        let mut items = block.items
             .into_iter()
-            .map(|item| Ok(format!("{}", self.compile_node(item)?)))
-            .collect();
-
-        let mut items = items?;
+            .map(|item| {
+                self.compile_node(item)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let last = items.pop();
         items.push(format!("return {};", last.unwrap()));
@@ -97,45 +99,58 @@ impl Compiler {
     }
 
     fn compile_variant(&mut self, variant: Variant) -> Result<String> {
-        match &variant.name.value[..] {
+        match &variant.name[..] {
             "True"  => Ok("true".into()),
             "False" => Ok("false".into()),
             _ => {
-                Err(NitrineError::error(
-                    variant.span,
-                    "Variants are not supported for now".into()))
+                Err(NitrineError::basic("Variants are not supported for now".into()))
             }
         }
     }
 
     fn compile_list(&mut self, list: List) -> Result<String> {
-        let items: Result<Vec<_>> = list.items
+        let items = list.items
             .into_iter()
-            .map(|item| self.compile_node(item))
-            .collect();
+            .map(|item| {
+                Ok(self.compile_node(item)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(format!("[{}]", items?.join(", ")))
+        Ok(format!("[{}]", items.join(", ")))
     }
 
     fn compile_record(&mut self, record: Record) -> Result<String> {
-        let props: Result<Vec<_>> = record.properties
+        let properties = record.properties
         .into_iter()
-        .map(|(key, val)| Ok(format!("{}: {}", key.value, self.compile_node(val)?)))
-        .collect();
+        .map(|(key, val)| {
+            Ok(format!("{}: {}", key, self.compile_node(val)?))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-        Ok(format!("{{ {} }}", props?.join(", ")))
+        Ok(format!("{{ {} }}", properties.join(", ")))
     }
 
-    fn compile_get(&mut self, get: Get) -> Result<String> {
-        Ok(format!("{}.{}", self.compile_node(*get.node)?, get.name.value))
+    fn compile_string(&mut self, value: String) -> Result<String> {
+        Ok(format!("'{}'", value))
     }
 
-    fn compile_string(&mut self, literal: Literal) -> Result<String> {
-        Ok(format!("'{}'", literal.value))
+    fn compile_number(&mut self, value: String) -> Result<String> {
+        Ok(value)
     }
 
-    fn compile_number(&mut self, literal: Literal) -> Result<String> {
-        Ok(literal.value)
+    fn compile_template(&mut self, tmpl: Template) -> Result<String> {
+        let parts = tmpl.elements
+            .into_iter()
+            .map(|element| {
+                if let Node::String(value) = element {
+                    Ok(format!("'{}'", value))
+                } else {
+                    Ok(format!("({}).toString()", self.compile_node(element)?))
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(format!("{}", parts.join(" + ")))
     }
 
     // will be used for prettyprinting in the future

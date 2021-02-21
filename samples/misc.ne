@@ -23,7 +23,7 @@ factorial(n) =
 
 
 counter() = do
-  counter := 0;
+  counter = mut 0;
   div [
     button "+" { click() = counter := counter + 1 },
     p ["total ", strong "{counter}"],

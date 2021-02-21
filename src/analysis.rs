@@ -6,7 +6,8 @@ use crate::error::{Result, NitrineError};
 
 
 struct Info {
-    mutable: bool
+    mutable: bool,
+    span: Span,
 }
 
 struct Context<'ctx> {
@@ -29,8 +30,8 @@ impl<'ctx> Context<'ctx> {
         }
     }
 
-    fn insert(&mut self, name: String, mutable: bool) {
-        self.items.insert(name, Info { mutable });
+    fn insert(&mut self, name: String, mutable: bool, span: Span) {
+        self.items.insert(name, Info { mutable, span });
     }
 
     fn find(&self, name: &String) -> Option<&Info> {
@@ -56,8 +57,9 @@ impl Analyzer {
         match expr {
             Expr::Name(expr) => self.check_name(ctx, expr),
             Expr::Fun(expr) => self.check_fun(ctx, expr),
-            Expr::Let(expr) => self.check_let(ctx, expr),
-            Expr::Mut(expr) => self.check_mut(ctx, expr),
+            Expr::Def(expr) => self.check_def(ctx, expr),
+            Expr::Set(expr) => self.check_set(ctx, expr),
+            Expr::Get(expr) => self.check_get(ctx, expr),
             Expr::Apply(expr) => self.check_apply(ctx, expr),
             Expr::Unary(expr) => self.check_unary(ctx, expr),
             Expr::Binary(expr) => self.check_binary(ctx, expr),
@@ -66,12 +68,11 @@ impl Analyzer {
             Expr::Tuple(expr) => self.check_tuple(ctx, expr),
             Expr::List(expr) => self.check_list(ctx, expr),
             Expr::Record(expr) => self.check_record(ctx, expr),
-            Expr::Member(expr) => self.check_member(ctx, expr),
             Expr::Variant(expr) => self.check_variant(ctx, expr),
             Expr::String(expr) => self.check_string(expr),
             Expr::Number(expr) => self.check_number(expr),
             Expr::Template(expr) => self.check_template(ctx, expr),
-            Expr::Unit(span) => Ok(Node::Unit(span))
+            Expr::Unit(_) => Ok(Node::Unit)
         }
     }
 
@@ -84,92 +85,95 @@ impl Analyzer {
             //     format!("cannot find value `{}` in this scope", name.value)));
         }
 
-        Ok(Node::Name(hir::Name { value: name.value, span: name.span }))
+        Ok(Node::Var(name.value))
     }
 
-    fn check_fun(&mut self, ctx: &mut Context, mut function: ast::Fun) -> Result<Node> {
+    fn check_fun(&mut self, ctx: &mut Context, function: ast::Fun) -> Result<Node> {
         let mut ctx = Context::nested(ctx);
 
-        for arg in function.args.iter() {
-            ctx.insert(arg.value.clone(), false);
-        }
+        let args = function.args
+            .into_iter()
+            .map(|arg| {
+                match arg {
+                    Expr::Name(name) => {
+                        ctx.insert(name.value.clone(), false, name.span);
+                        Ok(name.value)
+                    }
+                    Expr::Unit(_span) => {
+                        Ok(String::new())
+                    }
+                    _ => {
+                        Err(NitrineError::error(
+                            arg.span(),
+                            "Function argument destructuring is not supported for now".into()))
+                    }
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let value = self.check_expr(&mut ctx, *function.value)?;
 
-        if function.args.is_empty() {
-            function.args.push(ast::Name { value: "".into(), span: Span::new(0, 0, 0) })
-        }
-
-        let function = function.args
+        let function = args
             .into_iter()
             .rev()
             .fold(value, |value, param| {
-                let span = param.span;
-                Node::Fun(hir::Fun { param: convert_name(param), value: box value, span })
+                Node::Fun(hir::Fun { param, value: box value })
             });
 
         Ok(function)
     }
 
-    fn check_let(&mut self, ctx: &mut Context, decl: ast::Let) -> Result<Node> {
-        let name = if let Expr::Name(name) = *decl.patt {
-            hir::Name { value: name.value, span: name.span }
+    fn check_def(&mut self, ctx: &mut Context, def: ast::Def) -> Result<Node> {
+        let name = if let Expr::Name(name) = *def.patt {
+            ctx.insert(name.value.clone(), def.mutable, name.span);
+            name.value
         } else {
             return Err(NitrineError::error(
-                decl.span,
+                def.span,
                 "destructuring is not supported for now".into()))
         };
 
-        let value = box self.check_expr(ctx, *decl.value)?;
+        let value = box self.check_expr(ctx, *def.value)?;
 
-        ctx.insert(name.value.clone(), false);
-
-        Ok(Node::Let(hir::Let { name, value, span: decl.span }))
+        Ok(Node::Def(hir::Def { name, value }))
     }
 
-    fn check_mut(&mut self, ctx: &mut Context, decl: ast::Mut) -> Result<Node> {
-        let name = if let Expr::Name(name) = *decl.patt {
-            hir::Name { value: name.value, span: name.span }
+    fn check_set(&mut self, ctx: &mut Context, set: ast::Set) -> Result<Node> {
+        let (name, span) = if let Expr::Name(name) = *set.patt {
+            (name.value, name.span)
         } else {
             return Err(NitrineError::error(
-                decl.span,
+                set.span,
                 "destructuring is not supported for now".into()))
         };
 
-        let value = box self.check_expr(ctx, *decl.value)?;
+        let value = box self.check_expr(ctx, *set.value)?;
 
-        if ctx.find(&name.value).map(|info| info.mutable).unwrap_or(false) {
-            Ok(Node::Set(hir::Set { name, value, span: decl.span }))
-        } else {
-            ctx.insert(name.value.clone(), true);
-            Ok(Node::Let(hir::Let { name, value, span: decl.span }))
+        match ctx.find(&name) {
+            Some(Info { mutable: true, .. }) => {
+                Ok(Node::Set(hir::Set { name, value }))
+            }
+            Some(Info { mutable: false, .. }) => {
+                Err(NitrineError::error(
+                    span,
+                    format!("variable `{}` not defined as mutable", name)))
+            }
+            None => {
+                Err(NitrineError::error(
+                    span,
+                    format!("cannot find value `{}` in this scope", name)))
+            }
         }
-    }
-
-    fn check_apply(&mut self, ctx: &mut Context, app: ast::Apply) -> Result<Node> {
-        let args: Result<Vec<_>> = app.args
-            .into_iter()
-            .map(|args| self.check_expr(ctx, args))
-            .collect();
-
-        let args = args?;
-
-        let fun = box self.check_expr(ctx, *app.fun)?;
-
-        Ok(Node::Apply(hir::Apply { fun, args, span: app.span }))
     }
 
     fn check_unary(&mut self, ctx: &mut Context, unary: ast::Unary) -> Result<Node> {
         let args = vec![
-            self.check_expr(ctx, *unary.expr)?
+            self.check_expr(ctx, *unary.expr)?,
         ];
 
-        let fun = box Node::Name(hir::Name {
-            value: format!("{}", unary.op).to_lowercase(),
-            span: unary.op.span
-        });
+        let fun = Node::Var(format!("{}", unary.op).to_lowercase());
 
-        Ok(Node::Apply(hir::Apply { fun, args, span: unary.span }))
+        self.generate_apply(fun, args)
     }
 
     fn check_binary(&mut self, ctx: &mut Context, binary: ast::Binary) -> Result<Node> {
@@ -178,112 +182,126 @@ impl Analyzer {
             self.check_expr(ctx, *binary.rexpr)?
         ];
 
-        let fun = box Node::Name(hir::Name {
-            value: format!("{}", binary.op).to_lowercase(),
-            span: binary.op.span
-        });
+        let fun = Node::Var(format!("{}", binary.op).to_lowercase());
 
-        Ok(Node::Apply(hir::Apply { fun, args, span: binary.span }))
+        self.generate_apply(fun, args)
+    }
+
+    fn check_apply(&mut self, ctx: &mut Context, app: ast::Apply) -> Result<Node> {
+        let fun = self.check_expr(ctx, *app.fun)?;
+
+        let args = app.args
+            .into_iter()
+            .map(|arg| {
+                Ok(self.check_expr(ctx, arg)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.generate_apply(fun, args)
+    }
+
+    fn generate_apply(&self, fun: Node, args: Vec<Node>) -> Result<Node> {
+        let app = args
+            .into_iter()
+            .fold(fun, |app, arg| {
+                Node::Apply(hir::Apply { fun: box app, arg: box arg })
+            });
+
+        Ok(app)
     }
 
     fn check_block(&mut self, ctx: &mut Context, block: ast::Block) -> Result<Node> {
         let mut ctx = Context::nested(ctx);
 
-        let items: Result<Vec<_>> = block.items
+        let items = block.items
             .into_iter()
-            .map(|item| self.check_expr(&mut ctx, item))
-            .collect();
+            .map(|item| {
+                Ok(self.check_expr(&mut ctx, item)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let items = items?;
-
-        Ok(Node::Block(hir::Block { items, span: block.span }))
+        Ok(Node::Block(hir::Block { items }))
 
     }
 
     fn check_if(&mut self, ctx: &mut Context, cond: ast::If) -> Result<Node> {
-        let ast::If { test, then, other, span } = cond;
+        let ast::If { test, then, other, .. } = cond;
 
         let test  = box self.check_expr(ctx, *test)?;
         let then  = box self.check_expr(ctx, *then)?;
         let other = box self.check_expr(ctx, *other)?;
 
-        Ok(Node::Cond(hir::Cond { test, then, other, span }))
+        Ok(Node::Cond(hir::Cond { test, then, other }))
     }
 
     fn check_tuple(&mut self, ctx: &mut Context, tuple: ast::Tuple) -> Result<Node> {
-        let items: Result<Vec<_>> = tuple.items
+        let items = tuple.items
             .into_iter()
-            .map(|item| self.check_expr(ctx, item))
-            .collect();
+            .map(|item| {
+                Ok(self.check_expr(ctx, item)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let items = items?;
-
-        Ok(Node::List(hir::List { items, span: tuple.span }))
+        Ok(Node::List(hir::List { items }))
     }
 
     fn check_list(&mut self, ctx: &mut Context, list: ast::List) -> Result<Node> {
-        let items: Result<Vec<_>> = list.items
+        let items = list.items
             .into_iter()
-            .map(|item| self.check_expr(ctx, item))
-            .collect();
+            .map(|item| {
+                Ok(self.check_expr(ctx, item)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let items = items?;
-
-        Ok(Node::List(hir::List { items, span: list.span }))
+        Ok(Node::List(hir::List { items }))
     }
 
     fn check_record(&mut self, ctx: &mut Context, record: ast::Record) -> Result<Node> {
-        let props: Result<Vec<_>> = record.properties
+        let properties = record.properties
             .into_iter()
-            .map(|(key, val)| Ok((convert_name(key), self.check_expr(ctx, val)?)))
-            .collect();
+            .map(|(key, val)| {
+                Ok((key.value, self.check_expr(ctx, val)?))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let properties = props?;
-
-        Ok(Node::Record(hir::Record { properties, span: record.span }))
+        Ok(Node::Record(hir::Record { properties }))
     }
 
-    fn check_member(&mut self, ctx: &mut Context, member: ast::Member) -> Result<Node> {
-        let node = box self.check_expr(ctx, *member.expr)?;
+    fn check_get(&mut self, ctx: &mut Context, get: ast::Get) -> Result<Node> {
+        let node = box self.check_expr(ctx, *get.expr)?;
 
-        Ok(Node::Get(hir::Get { node, name: convert_name(member.name), span: member.span }))
+        Ok(Node::Get(hir::Get { node, name: get.name.value }))
     }
 
     fn check_variant(&mut self, ctx: &mut Context, variant: ast::Variant) -> Result<Node> {
-        let values: Result<Vec<_>> = variant.values
+        let values = variant.values
             .into_iter()
-            .map(|value| Ok(self.check_expr(ctx, value)?))
-            .collect();
+            .map(|value| {
+                Ok(self.check_expr(ctx, value)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let values = values?;
-
-        Ok(Node::Variant(hir::Variant { values, name: convert_name(variant.name), span: variant.span }))
+        Ok(Node::Variant(hir::Variant { name: variant.name.value, values }))
     }
 
     fn check_string(&mut self, literal: ast::Literal) -> Result<Node> {
-        Ok(Node::String(hir::Literal { value: literal.value, span: literal.span }))
+        Ok(Node::String(literal.value))
     }
 
     fn check_number(&mut self, literal: ast::Literal) -> Result<Node> {
-        Ok(Node::Number(hir::Literal { value: literal.value, span: literal.span }))
+        Ok(Node::Number(literal.value))
     }
 
     fn check_template(&mut self, ctx: &mut Context, template: ast::Template) -> Result<Node> {
-        let arguments: Result<Vec<_>> = template.elements
+        let elements = template.elements
             .into_iter()
-            .map(|elements| Ok(self.check_expr(ctx, elements)?))
-            .collect();
+            .map(|elements| {
+                Ok(self.check_expr(ctx, elements)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let args = arguments?;
-
-        let fun = box Node::Name(hir::Name { value: "concat".into(), span: template.span });
-
-        Ok(Node::Apply(hir::Apply { fun, args, span: template.span }))
+        Ok(Node::Template(hir::Template { elements }))
     }
-}
-
-fn convert_name(name: ast::Name) -> hir::Name {
-    hir::Name { value: name.value, span: name.span }
 }
 
 pub fn analyze(module: ast::Module) -> Result<hir::Module> {
@@ -291,19 +309,17 @@ pub fn analyze(module: ast::Module) -> Result<hir::Module> {
 
     let mut global = Context::new();
 
-    let nodes: Result<Vec<_>> = module.definitions
+    let nodes = module.definitions
         .into_iter()
         .map(|def| {
-            global.insert(def.name.value.clone(), false);
+            global.insert(def.name.value.clone(), false, def.span);
 
-            let name  = convert_name(def.name);
+            let name  = def.name.value;
             let value = box analyzer.check_expr(&mut global, *def.value)?;
 
-            Ok(Node::Let(hir::Let { name, value, span: def.span }))
+            Ok(Node::Def(hir::Def { name, value }))
         })
-        .collect();
-
-    let nodes = nodes?;
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(hir::Module { name: module.name, nodes })
 }

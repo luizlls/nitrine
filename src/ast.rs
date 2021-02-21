@@ -17,9 +17,11 @@ pub enum Expr {
 
     Fun(Fun),
 
-    Let(Let),
+    Def(Def),
 
-    Mut(Mut),
+    Set(Set),
+
+    Get(Get),
 
     Apply(Apply),
 
@@ -36,8 +38,6 @@ pub enum Expr {
     List(List),
 
     Record(Record),
-
-    Member(Member),
 
     Variant(Variant),
 
@@ -63,22 +63,30 @@ pub struct Definition {
 
 #[derive(Debug, Clone)]
 pub struct Fun {
-    pub args: Vec<Name>,
+    pub args: Vec<Expr>,
     pub value: Box<Expr>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Let {
+pub struct Def {
+    pub patt: Box<Expr>,
+    pub mutable: bool,
+    pub value: Box<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Set {
     pub patt: Box<Expr>,
     pub value: Box<Expr>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Mut {
-    pub patt: Box<Expr>,
-    pub value: Box<Expr>,
+pub struct Get {
+    pub expr: Box<Expr>,
+    pub name: Name,
     pub span: Span,
 }
 
@@ -137,13 +145,6 @@ pub struct Record {
 }
 
 #[derive(Debug, Clone)]
-pub struct Member {
-    pub expr: Box<Expr>,
-    pub name: Name,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
 pub struct Literal {
     pub value: String,
     pub span: Span,
@@ -168,8 +169,9 @@ impl Expr {
         match self {
             Expr::Name(expr) => expr.span,
             Expr::Fun(expr) => expr.span,
-            Expr::Let(expr) => expr.span,
-            Expr::Mut(expr) => expr.span,
+            Expr::Def(expr) => expr.span,
+            Expr::Set(expr) => expr.span,
+            Expr::Get(expr) => expr.span,
             Expr::Apply(expr) => expr.span,
             Expr::Unary(expr) => expr.span,
             Expr::Binary(expr) => expr.span,
@@ -178,7 +180,6 @@ impl Expr {
             Expr::Tuple(expr) => expr.span,
             Expr::List(expr) => expr.span,
             Expr::Record(expr) => expr.span,
-            Expr::Member(expr) => expr.span,
             Expr::Variant(expr) => expr.span,
             Expr::Number(expr) => expr.span,
             Expr::String(expr) => expr.span,

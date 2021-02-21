@@ -104,9 +104,11 @@ impl<'s> Parser<'s> {
 
         while self.match_lines() {
             term = match self.token.kind {
-                TokenKind::Equals
-              | TokenKind::Warlus => {
+                TokenKind::Equals => {
                     self.def(term)?
+                }
+                TokenKind::Warlus => {
+                    self.set(term)?
                 }
                 TokenKind::Dot => {
                     self.dot(term)?
@@ -122,19 +124,24 @@ impl<'s> Parser<'s> {
         }
     }
 
-    fn def(&mut self, patt: Expr) -> Result<Expr> {
-        let span = patt.span();
+    fn def(&mut self, expr: Expr) -> Result<Expr> {
+        let span = expr.span();
 
-        let mutable = self.matches(TokenKind::Warlus);
-        self.bump();
+        self.eat(TokenKind::Equals)?;
+        let mutable = self.maybe_eat(TokenKind::Mut);
+        let value   = box self.expr()?;
 
+        Ok(Expr::Def(Def { patt: box expr, mutable, value, span }))
+    }
+
+
+    fn set(&mut self, expr: Expr) -> Result<Expr> {
+        let span = expr.span();
+
+        self.eat(TokenKind::Warlus)?;
         let value = box self.expr()?;
 
-        if mutable {
-            Ok(Expr::Mut(Mut { patt: box patt, value, span }))
-        } else {
-            Ok(Expr::Let(Let { patt: box patt, value, span }))
-        }
+        Ok(Expr::Set(Set { patt: box expr, value, span }))
     }
 
     fn dot(&mut self, mut expr: Expr) -> Result<Expr> {
@@ -142,7 +149,7 @@ impl<'s> Parser<'s> {
 
         while self.maybe_eat(TokenKind::Dot) {
             let name = self.name()?;
-                expr = Expr::Member(Member { expr: box expr, name, span: self.complete(span) });
+                expr = Expr::Get(Get { expr: box expr, name, span: self.complete(span) });
         }
 
         Ok(expr)
@@ -169,10 +176,14 @@ impl<'s> Parser<'s> {
     fn function(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let args = self.block_of(
+        let mut args = self.block_of(
             TokenKind::OpeningParen,
             TokenKind::ClosingParen,
-            Self::name)?;
+            Self::expr)?;
+
+        if args.is_empty() {
+            args.push(Expr::Unit(self.complete(start)));
+        }
 
         self.eat(TokenKind::Equals)?;
 
@@ -470,16 +481,20 @@ impl<'s> Parser<'s> {
     }
 
     fn lambda(&mut self) -> Result<Expr> {
-        let span = self.span();
+        let start = self.span();
 
-        let args = self.block_of(
+        let mut args = self.block_of(
             TokenKind::Fn,
             TokenKind::Arrow,
-            Self::name)?;
+            Self::expr)?;
+
+        if args.is_empty() {
+            args.push(Expr::Unit(self.complete(start)));
+        }
 
         let value = box self.expr()?;
 
-        Ok(Expr::Fun(Fun { args, value, span: self.complete(span) }))
+        Ok(Expr::Fun(Fun { args, value, span: self.complete(start) }))
     }
 
     fn block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
