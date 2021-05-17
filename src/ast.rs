@@ -9,26 +9,11 @@ pub struct Module {
 
 
 #[derive(Debug, Clone)]
-pub struct Expr(pub ExprKind, pub Span);
-
-impl Expr {
-    pub fn kind(&self) -> &ExprKind {
-        &self.0
-    }
-
-    pub fn span(&self) -> Span {
-        self.1
-    }
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
 }
 
-#[derive(Debug, Clone)]
-pub struct Name(pub String, pub Span);
-
-impl Name {
-    pub fn span(&self) -> Span {
-        self.1
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
@@ -37,49 +22,249 @@ pub enum ExprKind {
 
     Name(Name),
 
-    Fun(Vec<Name>, Box<Expr>),
+    Fun(Fun),
 
-    Def(Name, Box<Expr>),
+    Def(Def),
 
-    Set(Box<Expr>, Box<Expr>),
+    Set(Set),
 
-    GetMember(Box<Expr>, Name),
+    Mut(Mut),
 
-    GetIndex(Box<Expr>, Box<Expr>),
+    GetMember(GetMember),
 
-    Mut(Box<Expr>),
+    GetIndex(GetIndex),
 
-    Apply(Box<Expr>, Box<Expr>),
-
-    Unary(Operator, Box<Expr>),
-
-    Binary(Operator, Box<Expr>, Box<Expr>),
+    Apply(Apply),
 
     Operator(Operator),
 
-    If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Unary(Unary),
 
-    Match(Box<Expr>, Vec<(Expr, Expr)>),
+    Binary(Binary),
 
-    For(Name, Box<Expr>, Box<Expr>),
+    If(If),
 
-    Tuple(Vec<Expr>),
+    Match(Match),
 
-    List(Vec<Expr>),
+    For(For),
 
-    Dict(Vec<(Expr, Expr)>),
+    Tuple(Tuple),
 
-    Block(Vec<Expr>),
+    List(List),
 
-    Group(Box<Expr>),
+    Dict(Dict),
 
-    Variant(Name, Vec<Expr>),
+    Block(Block),
+
+    Group(Group),
+
+    Variant(Variant),
 
     Number(String),
 
     String(String),
 
-    Template(Vec<Expr>),
+    Template(Template),
+}
+
+
+#[derive(Debug, Clone)]
+pub struct Name {
+    pub value: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Fun {
+    pub params: Vec<Name>,
+    pub value: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Def {
+    pub name: Name,
+    pub value: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Set {
+    pub target: Box<Expr>,
+    pub value: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Mut {
+    pub value: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetMember {
+    pub source: Box<Expr>,
+    pub member: Name,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetIndex {
+    pub source: Box<Expr>,
+    pub index: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Apply {
+    pub fun: Box<Expr>,
+    pub arg: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Unary {
+    pub op: Operator,
+    pub rhs: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Binary {
+    pub op: Operator,
+    pub lhs: Box<Expr>,
+    pub rhs: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct If {
+    pub test: Box<Expr>,
+    pub then: Box<Expr>,
+    pub otherwise: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct For {
+    pub target: Name,
+    pub source: Box<Expr>,
+    pub value:  Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub value: Box<Expr>,
+    pub cases: Vec<(Expr, Expr)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Tuple {
+    pub items: Vec<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct List {
+    pub items: Vec<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Dict {
+    pub items: Vec<(Expr, Expr)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub items: Vec<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Group {
+    pub inner: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Template {
+    pub elements: Vec<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Variant {
+    pub name: Name,
+    pub values: Vec<Expr>,
+}
+
+impl ExprKind {
+    pub fn name(value: String, span: Span) -> ExprKind {
+        ExprKind::Name(Name { value, span })
+    }
+
+    pub fn fun(params: Vec<Name>, value: Box<Expr>) -> ExprKind {
+        ExprKind::Fun(Fun { params, value })
+    }
+
+    pub fn def(name: Name, value: Box<Expr>) -> ExprKind {
+        ExprKind::Def(Def { name, value })
+    }
+
+    pub fn set(target: Box<Expr>, value: Box<Expr>) -> ExprKind {
+        ExprKind::Set(Set { target, value })
+    }
+
+    pub fn mut_(value: Box<Expr>) -> ExprKind {
+        ExprKind::Mut(Mut { value })
+    }
+
+    pub fn get_member(source: Box<Expr>, member: Name) -> ExprKind {
+        ExprKind::GetMember(GetMember { source, member })
+    }
+
+    pub fn get_index(source: Box<Expr>, index: Box<Expr>) -> ExprKind {
+        ExprKind::GetIndex(GetIndex { source, index })
+    }
+
+    pub fn apply(fun: Box<Expr>, arg: Box<Expr>) -> ExprKind {
+        ExprKind::Apply(Apply { fun, arg })
+    }
+
+    pub fn unary(op: Operator, rhs: Box<Expr>) -> ExprKind {
+        ExprKind::Unary(Unary { op, rhs })
+    }
+
+    pub fn binary(op: Operator, lhs: Box<Expr>, rhs: Box<Expr>) -> ExprKind {
+        ExprKind::Binary(Binary { op, lhs, rhs })
+    }
+
+    pub fn tuple(items: Vec<Expr>) -> ExprKind {
+        ExprKind::Tuple(Tuple { items })
+    }
+
+    pub fn list(items: Vec<Expr>) -> ExprKind {
+        ExprKind::List(List { items })
+    }
+
+    pub fn dict(items: Vec<(Expr, Expr)>) -> ExprKind {
+        ExprKind::Dict(Dict { items })
+    }
+
+    pub fn block(items: Vec<Expr>) -> ExprKind {
+        ExprKind::Block(Block { items })
+    }
+
+    pub fn group(inner: Box<Expr>) -> ExprKind {
+        ExprKind::Group(Group { inner })
+    }
+
+    pub fn template(elements: Vec<Expr>) -> ExprKind {
+        ExprKind::Template(Template { elements })
+    }
+
+    pub fn variant(name: Name, values: Vec<Expr>) -> ExprKind {
+        ExprKind::Variant(Variant { name, values })
+    }
+
+    pub fn if_(test: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr>) -> ExprKind {
+        ExprKind::If(If { test, then, otherwise })
+    }
+
+    pub fn for_(target: Name, source: Box<Expr>, value:  Box<Expr>) -> ExprKind {
+        ExprKind::For(For { target, source, value })
+    }
+
+    pub fn match_(value: Box<Expr>, cases: Vec<(Expr, Expr)>) -> ExprKind {
+        ExprKind::Match(Match { value, cases })
+    }
+
 }
 
 #[derive(Debug, Clone)]

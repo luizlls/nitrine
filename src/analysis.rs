@@ -54,7 +54,7 @@ impl Analyzer {
     }
 
     fn check_expr(&mut self, ctx: &mut Context, expr: Expr) -> Result<Node> {
-        match expr {
+        match expr.kind {
             Expr::Name(expr) => self.check_name(ctx, expr),
             Expr::Fun(expr) => self.check_fun(ctx, expr),
             Expr::Def(expr) => self.check_def(ctx, expr),
@@ -72,7 +72,7 @@ impl Analyzer {
             Expr::String(expr) => self.check_string(expr),
             Expr::Number(expr) => self.check_number(expr),
             Expr::Template(expr) => self.check_template(ctx, expr),
-            Expr::Unit(_) => Ok(Node::Unit)
+            Expr::Unit => Ok(Node::Unit)
         }
     }
 

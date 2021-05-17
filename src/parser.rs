@@ -1,5 +1,5 @@
 use crate::{Source, Span};
-use crate::ast::{self, *};
+use crate::ast::*;
 use crate::token::*;
 use crate::lexer::Lexer;
 use crate::error::{Result, NitrineError};
@@ -31,9 +31,10 @@ impl<'s> Parser<'s> {
     fn parse_name(&mut self) -> Result<Name> {
         let span = self.token.span;
         self.eat(TokenKind::Literal(LiteralKind::Lower))?;
-        let name = self.source.content[span.range()].into();
 
-        Ok(Name(name, span))
+        let value = self.source.content[span.range()].into();
+
+        Ok(Name { value, span })
     }
 
     fn parse_expr(&mut self) -> Result<Expr> {
@@ -56,10 +57,10 @@ impl<'s> Parser<'s> {
             TokenKind::Operator(_) => {
                 self.parse_unary()
             }
-            tk if self.start_term() => {
+            _ if self.start_term() => {
                 let mut value = self.parse_term()?;
 
-                if let ExprKind::Name(_) = value.kind() {
+                if let ExprKind::Name(_) = value.kind {
                     value = match self.token.kind {
                         TokenKind::Symbol(SymbolKind::Equals) => {
                             self.parse_def(value)?
@@ -98,12 +99,11 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_term(&mut self) -> Result<Expr> {
-        use ExprKind::Name;
-
         match self.token.kind {
             TokenKind::Literal(LiteralKind::Lower) => {
                 let name = self.parse_name()?;
-                Ok(Expr(Name(name), self.prev.span))
+                let span = name.span;
+                self.expr(ExprKind::Name(name), span)
             }
             TokenKind::Literal(LiteralKind::Upper) => {
                 self.parse_variant()
@@ -132,13 +132,22 @@ impl<'s> Parser<'s> {
         }
     }
 
+    fn parse_term_and_apply(&mut self) -> Result<Expr> {
+        let term = self.parse_term()?;
+
+        if self.start_term() && self.match_lines() {
+            self.parse_apply(term)
+        } else {
+            Ok(term)
+        }
+    }
+
     fn parse_def(&mut self, patt: Expr) -> Result<Expr> {
-        use ExprKind::Def;
 
-        let start = patt.span();
+        let start = patt.span;
 
-        let name = if let ExprKind::Name(name) = patt.kind() {
-            name.clone()
+        let name = if let ExprKind::Name(name) = patt.kind {
+            name
         } else {
             return Err(NitrineError::error(
                 start,
@@ -148,24 +157,22 @@ impl<'s> Parser<'s> {
         self.eat(TokenKind::Symbol(SymbolKind::Equals))?;
         let value = box self.parse_expr()?;
 
-        self.expr(Def(name, value), start)
+        self.expr(ExprKind::def(name, value), start)
     }
 
     fn parse_set(&mut self, expr: Expr) -> Result<Expr> {
-        use ExprKind::Set;
 
-        let start = expr.span();
+        let start = expr.span;
 
         self.eat(TokenKind::Symbol(SymbolKind::Warlus))?;
         let value = box self.parse_expr()?;
 
-        self.expr(Set(box expr, value), start)
+        self.expr(ExprKind::set(box expr, value), start)
     }
 
     fn parse_get(&mut self, mut expr: Expr) -> Result<Expr> {
-        use ExprKind::{GetIndex, GetMember};
 
-        let span = expr.span();
+        let span = expr.span;
 
         while self.maybe_eat(TokenKind::Symbol(SymbolKind::Dot)) {
             expr = match self.token.kind {
@@ -173,11 +180,12 @@ impl<'s> Parser<'s> {
                     self.eat(TokenKind::Symbol(SymbolKind::OpeningBracket))?;
                     let index = box self.parse_expr()?;
                     self.eat(TokenKind::Symbol(SymbolKind::ClosingBracket))?;
-                    self.expr(GetIndex(box expr, index), expr.span())?
+
+                    self.expr(ExprKind::get_index(box expr, index), span)?
                 }
                 _ => {
                     let name = self.parse_name()?;
-                    self.expr(GetMember(box expr, name), expr.span())?
+                    self.expr(ExprKind::get_member(box expr, name), span)?
                 }
             };
         }
@@ -186,24 +194,22 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_mut(&mut self) -> Result<Expr> {
-        use ExprKind::Mut;
 
         let start = self.span();
         self.eat(TokenKind::Keyword(KeywordKind::Mut))?;
 
         let value = self.parse_expr()?;
 
-        self.expr(Mut(box value), start)
+        self.expr(ExprKind::mut_(box value), start)
     }
 
     fn parse_block(&mut self) -> Result<Expr> {
-        use ExprKind::Block;
 
         let start = self.span();
 
         let mut items = vec![];
 
-        self.eat(TokenKind::Symbol(SymbolKind::OpeningBrace));
+        self.eat(TokenKind::Symbol(SymbolKind::OpeningBrace))?;
 
         while !self.done() {
             if self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace)) {
@@ -213,14 +219,12 @@ impl<'s> Parser<'s> {
             items.push(self.parse_expr()?);
         }
 
-        self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace));
+        self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
 
-        self.expr(Block(items), start)
+        self.expr(ExprKind::block(items), start)
     }
 
     fn parse_fn(&mut self) -> Result<Expr> {
-        use ExprKind::{Fun, Name};
-
         let start = self.span();
 
         let mut params = self.parse_while(
@@ -233,32 +237,34 @@ impl<'s> Parser<'s> {
             self.parse_expr()?
         } else if params.len() > 1 {
             let name = params.pop().unwrap();
-            self.expr(Name(name), name.span())?
+            let span = name.span;
+            self.expr(ExprKind::Name(name), span)?
         } else {
             return Err(NitrineError::error(
                 self.token.span,
                 "fn `value` must start in the same line".into()));
         };
 
-        self.expr(Fun(params, box value), start)
+        let value = box value;
+
+        self.expr(ExprKind::fun(params, value), start)
     }
 
     fn parse_variant(&mut self) -> Result<Expr> {
-        use ExprKind::{Variant, Name};
 
         let start = self.span();
         self.eat(TokenKind::Literal(LiteralKind::Upper))?;
 
-        let span = self.prev.span;
-        let name = self.source.content[span.range()].into();
-        let name = ast::Name(name, span);
+        let span  = self.prev.span;
+        let value = self.source.content[span.range()].into();
+        let name  = Name { value, span };
 
         if self.token_is(TokenKind::Symbol(SymbolKind::Dot)) && self.match_lines() {
             self.parse_get(
-                self.expr(Name(name), span)?)
+                self.expr(ExprKind::Name(name), span)?)
         } else {
             let values = self.parse_args()?;
-            self.expr(Variant(name, values), start)
+            self.expr(ExprKind::variant(name, values), start)
         }
     }
 
@@ -269,17 +275,16 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_apply(&mut self, callee: Expr) -> Result<Expr> {
-        use ExprKind::Apply;
 
         self.parse_args()?
             .into_iter()
             .try_fold(callee, |callee, arg| {
-                self.expr(Apply(box callee, box arg), callee.span())
+                let span = callee.span;
+                self.expr(ExprKind::apply(box callee, box arg), span)
             })
     }
 
     fn parse_template(&mut self) -> Result<Expr> {
-        use ExprKind::Template;
 
         let start = self.span();
 
@@ -307,13 +312,13 @@ impl<'s> Parser<'s> {
         let elements = elements
             .into_iter()
             .filter(|part| {
-                match part.kind() {
-                    ExprKind::String(s) => !s.is_empty(), _ => true
+                match part.kind {
+                    ExprKind::String(ref s) => !s.is_empty(), _ => true
                 }
             })
             .collect();
 
-        self.expr(Template(elements), start)
+        self.expr(ExprKind::template(elements), start)
     }
 
     fn parse_string(&mut self, kind: TokenKind) -> Result<Expr> {
@@ -355,7 +360,6 @@ impl<'s> Parser<'s> {
             Dict,
         }
 
-        use ExprKind::{List, Dict};
 
         let start = self.span();
 
@@ -403,14 +407,13 @@ impl<'s> Parser<'s> {
         self.eat(TokenKind::Symbol(SymbolKind::ClosingBracket))?;
 
         if kind == CollectionKind::Dict {
-            self.expr(Dict(dict_items), start)
+            self.expr(ExprKind::dict(dict_items), start)
         } else {
-            self.expr(List(list_items), start)
+            self.expr(ExprKind::list(list_items), start)
         }
     }
 
     fn parse_paren(&mut self) -> Result<Expr> {
-        use ExprKind::{Unit, Group, Tuple};
 
         let start = self.span();
 
@@ -420,18 +423,17 @@ impl<'s> Parser<'s> {
             Self::parse_expr)?;
 
         let kind = if items.is_empty() {
-            Unit
+            ExprKind::Unit
         } else if items.len() == 1 {
-            Group(box items.pop().unwrap())
+            ExprKind::group(box items.pop().unwrap())
         } else {
-            Tuple(items)
+            ExprKind::tuple(items)
         };
 
         self.expr(kind, start)
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
-        use ExprKind::{Operator, Unary};
 
         let (kind, span) = if let Token { kind: TokenKind::Operator(kind), span } = self.token {
             (kind, span)
@@ -441,12 +443,12 @@ impl<'s> Parser<'s> {
                 format!("{} is not a operator", self.token.kind)))
         };
 
-        let operator = self.operator(kind, span)?;
+        let operator = self.operator(kind)?;
 
         if self.prev.kind == TokenKind::Symbol(SymbolKind::OpeningParen)
         && self.peek.kind == TokenKind::Symbol(SymbolKind::ClosingParen) {
             self.bump();
-            return self.expr(Operator(operator), span);
+            return self.expr(ExprKind::Operator(operator), span);
         }
 
         self.bump();
@@ -459,30 +461,28 @@ impl<'s> Parser<'s> {
 
         let expr = box self.parse_term()?;
 
-        self.expr(Unary(operator, expr), span)
+        self.expr(ExprKind::unary(operator, expr), span)
     }
 
     fn parse_binary(&mut self, expr: Option<Expr>, minimum: u8) -> Result<Expr> {
-        use ExprKind::Binary;
 
         let mut expr = if let Some(expr) = expr {
             expr
         } else {
-            self.parse_term()?
+            self.parse_term_and_apply()?
         };
 
-        'outer:
         while let TokenKind::Operator(operator) = self.token.kind {
-            while let Some((precedence, associativity)) = operator.precedence() {
+            if let Some((precedence, associativity)) = operator.precedence() {
 
                 if precedence < minimum {
-                    break 'outer;
+                    break;
                 }
 
                 let span = self.token.span;
                 self.bump();
 
-                let operator = self.operator(operator, span)?;
+                let operator = self.operator(operator)?;
 
                 let fix = match associativity {
                     Associativity::Right => 0,
@@ -493,27 +493,20 @@ impl<'s> Parser<'s> {
                 let lexpr = box expr;
                 let rexpr = box self.parse_binary(None, precedence + fix)?;
 
-                expr = self.expr(Binary(operator, lexpr, rexpr), span)?;
+                expr = self.expr(ExprKind::binary(operator, lexpr, rexpr), span)?;
             }
         }
 
         Ok(expr)
     }
 
-    fn operator(&self, kind: OperatorKind, span: Span) -> Result<Operator> {
+    fn operator(&self, kind: OperatorKind) -> Result<Operator> {
         Ok(match kind {
             OperatorKind::Add => Operator::Add,
           | OperatorKind::Sub => Operator::Sub,
           | OperatorKind::Mul => Operator::Mul,
           | OperatorKind::Div => Operator::Div,
           | OperatorKind::Rem => Operator::Rem,
-          | OperatorKind::Concat => Operator::Concat,
-          | OperatorKind::BitAnd => Operator::BitAnd,
-          | OperatorKind::BitOr  => Operator::BitOr,
-          | OperatorKind::BitNot => Operator::BitNot,
-          | OperatorKind::BitXor => Operator::BitXor,
-          | OperatorKind::BitShr => Operator::BitShr,
-          | OperatorKind::BitShl => Operator::BitShl,
           | OperatorKind::And => Operator::And,
           | OperatorKind::Or  => Operator::Or,
           | OperatorKind::Not => Operator::Not,
@@ -523,18 +516,19 @@ impl<'s> Parser<'s> {
           | OperatorKind::Le  => Operator::Le,
           | OperatorKind::Gt  => Operator::Gt,
           | OperatorKind::Ge  => Operator::Ge,
-          | OperatorKind::LPipe => Operator::LPipe,
-          | OperatorKind::RPipe => Operator::RPipe,
-            _ => {
-                return Err(NitrineError::error(
-                    span,
-                    format!("Operator `{}` is not a valid binary (infix) operator", kind)));
-            }
+          | OperatorKind::Concat => Operator::Concat,
+          | OperatorKind::BitAnd => Operator::BitAnd,
+          | OperatorKind::BitOr  => Operator::BitOr,
+          | OperatorKind::BitNot => Operator::BitNot,
+          | OperatorKind::BitXor => Operator::BitXor,
+          | OperatorKind::BitShr => Operator::BitShr,
+          | OperatorKind::BitShl => Operator::BitShl,
+          | OperatorKind::LPipe  => Operator::LPipe,
+          | OperatorKind::RPipe  => Operator::RPipe,
         })
     }
 
     fn parse_if(&mut self) -> Result<Expr> {
-        use ExprKind::If;
 
         let start = self.span();
 
@@ -556,11 +550,10 @@ impl<'s> Parser<'s> {
             self.parse_expr()?
         };
 
-        self.expr(If(box test, box then, box other), start)
+        self.expr(ExprKind::if_(box test, box then, box other), start)
     }
 
     fn parse_for(&mut self) -> Result<Expr> {
-        use ExprKind::For;
 
         let start = self.span();
 
@@ -574,11 +567,10 @@ impl<'s> Parser<'s> {
             self.parse_expr()?
         };
 
-        self.expr(For(target, box source, box value), start)
+        self.expr(ExprKind::for_(target, box source, box value), start)
     }
 
     fn parse_match(&mut self) -> Result<Expr> {
-        use ExprKind::Match;
 
         let start = self.span();
 
@@ -593,9 +585,9 @@ impl<'s> Parser<'s> {
         loop {
             let patt = self.parse_term()?;
 
-            if matches!(patt.kind(), ExprKind::Template(_) | ExprKind::Group(_)) {
+            if matches!(patt.kind, ExprKind::Template(_) | ExprKind::Group(_)) {
                 return Err(NitrineError::error(
-                    patt.span(),
+                    patt.span,
                     "Pattern not supported".into()));
             }
 
@@ -616,7 +608,7 @@ impl<'s> Parser<'s> {
 
         self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
 
-        self.expr(Match(box value, cases), start)
+        self.expr(ExprKind::match_(box value, cases), start)
     }
 
     fn parse_while<T, F, P>(&mut self, mut collect: F, predicate: P)
@@ -660,7 +652,10 @@ impl<'s> Parser<'s> {
     }
 
     fn expr(&self, kind: ExprKind, start: Span) -> Result<Expr> {
-        Ok(Expr(kind, start.to(self.prev.span)))
+        Ok(Expr {
+            kind,
+            span: start.to(self.prev.span)
+        })
     }
 
     fn bump(&mut self) {
