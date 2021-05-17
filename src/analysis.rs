@@ -1,6 +1,6 @@
 use std::{collections::HashMap, vec};
 
-use crate::{Span, ast::{self, Expr}};
+use crate::{Span, ast::{self, *}};
 use crate::hir::{self, Node};
 use crate::error::{Result, NitrineError};
 
@@ -284,7 +284,7 @@ impl Analyzer {
         Ok(Node::Variant(hir::Variant { name: variant.name.value, values }))
     }
 
-    fn check_string(&mut self, literal: ast::Literal) -> Result<Node> {
+    fn check_string(&mut self, Expr { kind: ExprKind::String(literal), span }: Expr) -> Result<Node> {
         Ok(Node::String(literal.value))
     }
 

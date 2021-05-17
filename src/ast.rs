@@ -4,14 +4,19 @@ use std::fmt::{self, Debug};
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub name: String,
-    pub definitions: Vec<Definition>,
+    pub nodes: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
 
-    Unit(Span),
+#[derive(Debug, Clone)]
+pub enum ExprKind {
+
+    Unit,
 
     Name(Name),
 
@@ -21,7 +26,9 @@ pub enum Expr {
 
     Set(Set),
 
-    Get(Get),
+    GetMember(GetMember),
+
+    GetIndex(GetIndex),
 
     Apply(Apply),
 
@@ -33,17 +40,21 @@ pub enum Expr {
 
     If(If),
 
+    Match(Match),
+
+    For(For),
+
     Tuple(Tuple),
 
     List(List),
 
-    Record(Record),
+    Dict(Dict),
 
     Variant(Variant),
 
-    Number(Literal),
+    Number(String),
 
-    String(Literal),
+    String(String),
 
     Template(Template),
 }
@@ -51,57 +62,48 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub struct Name {
     pub value: String,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub struct Definition {
-    pub name: Name,
-    pub value: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Fun {
-    pub args: Vec<Expr>,
+    pub params: Vec<Name>,
     pub value: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Def {
-    pub patt: Box<Expr>,
-    pub mutable: bool,
+    pub name: Name,
     pub value: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Set {
-    pub patt: Box<Expr>,
+    pub target: Box<Expr>,
     pub value: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Get {
+pub struct GetMember {
     pub expr: Box<Expr>,
     pub name: Name,
-    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetIndex {
+    pub expr: Box<Expr>,
+    pub index: Box<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Apply {
     pub fun: Box<Expr>,
-    pub args: Vec<Expr>,
-    pub span: Span,
+    pub arg: Box<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Unary {
     pub op: Operator,
     pub expr: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -109,107 +111,66 @@ pub struct Binary {
     pub op: Operator,
     pub lexpr: Box<Expr>,
     pub rexpr: Box<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Block {
     pub items: Vec<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct If {
     pub test: Box<Expr>,
     pub then: Box<Expr>,
-    pub other: Box<Expr>,
-    pub span: Span,
+    pub otherwise: Box<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub value: Box<Expr>,
+    pub cases: Vec<(Expr, Expr)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct For {
+    pub target: Box<Expr>,
+    pub source: Box<Expr>,
+    pub value: Box<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Tuple {
     pub items: Vec<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct List {
     pub items: Vec<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Record {
-    pub properties: Vec<(Name, Expr)>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub struct Literal {
-    pub value: String,
-    pub span: Span,
+pub struct Dict {
+    pub items: Vec<(Expr, Expr)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Template {
     pub elements: Vec<Expr>,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub name: Name,
     pub values: Vec<Expr>,
-    pub span: Span,
-}
-
-
-impl Expr {
-    pub fn span(&self) -> Span {
-        match self {
-            Expr::Name(expr) => expr.span,
-            Expr::Fun(expr) => expr.span,
-            Expr::Def(expr) => expr.span,
-            Expr::Set(expr) => expr.span,
-            Expr::Get(expr) => expr.span,
-            Expr::Apply(expr) => expr.span,
-            Expr::Unary(expr) => expr.span,
-            Expr::Binary(expr) => expr.span,
-            Expr::Block(expr) => expr.span,
-            Expr::If(expr) => expr.span,
-            Expr::Tuple(expr) => expr.span,
-            Expr::List(expr) => expr.span,
-            Expr::Record(expr) => expr.span,
-            Expr::Variant(expr) => expr.span,
-            Expr::Number(expr) => expr.span,
-            Expr::String(expr) => expr.span,
-            Expr::Template(expr) => expr.span,
-            Expr::Unit(span) => *span,
-        }
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Operator {
-    pub kind: OperatorKind,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum OperatorKind {
+pub enum Operator {
     Add,
     Sub,
     Mul,
     Div,
     Rem,
-    Concat,
-    BitAnd,
-    BitOr,
-    BitNot,
-    BitXor,
-    BitShl,
-    BitShr,
     Eq,
     Ne,
     Lt,
@@ -219,13 +180,19 @@ pub enum OperatorKind {
     And,
     Or,
     Not,
-    Is,
-    IsNot,
-    Pipe,
+    Concat,
+    BitAnd,
+    BitOr,
+    BitNot,
+    BitXor,
+    BitShl,
+    BitShr,
+    LPipe,
+    RPipe,
 }
 
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.kind)
+        write!(f, "{:?}", self)
     }
 }
