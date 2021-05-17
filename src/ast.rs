@@ -7,10 +7,27 @@ pub struct Module {
     pub nodes: Vec<Expr>,
 }
 
+
 #[derive(Debug, Clone)]
-pub struct Expr {
-    pub kind: ExprKind,
-    pub span: Span,
+pub struct Expr(pub ExprKind, pub Span);
+
+impl Expr {
+    pub fn kind(&self) -> &ExprKind {
+        &self.0
+    }
+
+    pub fn span(&self) -> Span {
+        self.1
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Name(pub String, pub Span);
+
+impl Name {
+    pub fn span(&self) -> Span {
+        self.1
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -20,148 +37,49 @@ pub enum ExprKind {
 
     Name(Name),
 
-    Fun(Fun),
+    Fun(Vec<Name>, Box<Expr>),
 
-    Def(Def),
+    Def(Name, Box<Expr>),
 
-    Set(Set),
+    Set(Box<Expr>, Box<Expr>),
 
-    GetMember(GetMember),
+    GetMember(Box<Expr>, Name),
 
-    GetIndex(GetIndex),
+    GetIndex(Box<Expr>, Box<Expr>),
 
-    Apply(Apply),
+    Mut(Box<Expr>),
 
-    Unary(Unary),
+    Apply(Box<Expr>, Box<Expr>),
 
-    Binary(Binary),
+    Unary(Operator, Box<Expr>),
 
-    Block(Block),
+    Binary(Operator, Box<Expr>, Box<Expr>),
 
-    If(If),
+    Operator(Operator),
 
-    Match(Match),
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
 
-    For(For),
+    Match(Box<Expr>, Vec<(Expr, Expr)>),
 
-    Tuple(Tuple),
+    For(Name, Box<Expr>, Box<Expr>),
 
-    List(List),
+    Tuple(Vec<Expr>),
 
-    Dict(Dict),
+    List(Vec<Expr>),
 
-    Variant(Variant),
+    Dict(Vec<(Expr, Expr)>),
+
+    Block(Vec<Expr>),
+
+    Group(Box<Expr>),
+
+    Variant(Name, Vec<Expr>),
 
     Number(String),
 
     String(String),
 
-    Template(Template),
-}
-
-#[derive(Debug, Clone)]
-pub struct Name {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct Fun {
-    pub params: Vec<Name>,
-    pub value: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Def {
-    pub name: Name,
-    pub value: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Set {
-    pub target: Box<Expr>,
-    pub value: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GetMember {
-    pub expr: Box<Expr>,
-    pub name: Name,
-}
-
-#[derive(Debug, Clone)]
-pub struct GetIndex {
-    pub expr: Box<Expr>,
-    pub index: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Apply {
-    pub fun: Box<Expr>,
-    pub arg: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Unary {
-    pub op: Operator,
-    pub expr: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Binary {
-    pub op: Operator,
-    pub lexpr: Box<Expr>,
-    pub rexpr: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Block {
-    pub items: Vec<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct If {
-    pub test: Box<Expr>,
-    pub then: Box<Expr>,
-    pub otherwise: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Match {
-    pub value: Box<Expr>,
-    pub cases: Vec<(Expr, Expr)>,
-}
-
-#[derive(Debug, Clone)]
-pub struct For {
-    pub target: Box<Expr>,
-    pub source: Box<Expr>,
-    pub value: Box<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Tuple {
-    pub items: Vec<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct List {
-    pub items: Vec<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Dict {
-    pub items: Vec<(Expr, Expr)>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Template {
-    pub elements: Vec<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Variant {
-    pub name: Name,
-    pub values: Vec<Expr>,
+    Template(Vec<Expr>),
 }
 
 #[derive(Debug, Clone)]
