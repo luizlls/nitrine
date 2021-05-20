@@ -4,9 +4,8 @@
 #![macro_use]
 
 //pub mod compiler;
-//pub mod analysis;
+pub mod analysis;
 pub mod ast;
-pub mod hir;
 pub mod token;
 pub mod lexer;
 pub mod parser;
@@ -47,11 +46,21 @@ impl Span {
         }
     }
 
-    pub const fn to(self, other: Self) -> Span {
-        Span::new(self.line, self.start, other.end)
+    pub const fn zero() -> Span {
+        Span {
+            line: 0, start: 0, end: 0
+        }
     }
 
     pub const fn range(self) -> Range<usize> {
         (self.start as usize) .. (self.end as usize)
+    }
+}
+
+impl std::ops::Add for Span {
+    type Output = Span;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Span::new(self.line, self.start, rhs.end)
     }
 }

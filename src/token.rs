@@ -40,6 +40,7 @@ pub enum SymbolKind {
     Arrow,  // ->
     Equals, // =
     Warlus, // :=
+    Any, // _
 }
 
 
@@ -59,6 +60,7 @@ impl fmt::Display for SymbolKind {
             SymbolKind::Arrow => write!(f, "->"),
             SymbolKind::Equals => write!(f, "="),
             SymbolKind::Warlus => write!(f, ":="),
+            SymbolKind::Any => write!(f, "_"),
         }
     }
 }

@@ -78,8 +78,7 @@ impl<'src> Lexer<'src> {
             self.align();
 
             match self.curr {
-                Some('a'..='z')
-              | Some('_') => {
+                Some('a'..='z') => {
                     return Some(self.lower());
                 }
                 Some('A'..='Z') => {
@@ -87,6 +86,12 @@ impl<'src> Lexer<'src> {
                 }
                 Some('0'..='9') => {
                     return Some(self.number());
+                }
+                Some('_') if self.is_alpha(self.peek) => {
+                    return Some(self.lower());
+                }
+                Some('_') => {
+                    return self.single(TokenKind::Symbol(SymbolKind::Any));
                 }
                 Some('(') => {
                     return self.single(TokenKind::Symbol(SymbolKind::OpeningParen));

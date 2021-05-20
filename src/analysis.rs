@@ -1,45 +1,44 @@
+use core::panic;
 use std::{collections::HashMap, vec};
 
-use crate::{Span, ast::{self, *}};
-use crate::hir::{self, Node};
-use crate::error::{Result, NitrineError};
+use crate::Span;
+use crate::ast::*;
+use crate::error::Result;
 
-
-struct Info {
-    mutable: bool,
-    span: Span,
-}
 
 struct Context<'ctx> {
     parent: Option<&'ctx Self>,
-    items: HashMap<String, Info>
+    items: HashMap<String, ()>
 }
 
 impl<'ctx> Context<'ctx> {
-    fn new() -> Self {
+    fn new() -> Context<'ctx> {
         Context {
             parent: None,
             items: HashMap::new()
         }
     }
 
-    fn nested(parent: &'ctx Self) -> Self {
+    fn nested(parent: &'ctx Context) -> Context<'ctx> {
         Context {
             parent: Some(parent),
             items: HashMap::new()
         }
     }
 
-    fn insert(&mut self, name: String, mutable: bool, span: Span) {
-        self.items.insert(name, Info { mutable, span });
+    fn insert(&mut self, name: String) {
+        self.items.insert(name, ());
     }
 
-    fn find(&self, name: &String) -> Option<&Info> {
-        let value = self.items.get(name);
-        if value.is_some() {
-            value
+    fn find(&self, name: &String) -> bool {
+        if let Some(_) = self.items.get(name) {
+            true
         } else {
-            self.parent.and_then(|p| p.find(name))
+            if let Some(ref parent) = self.parent {
+                parent.find(name)
+            } else {
+                false
+            }
         }
     }
 }
@@ -53,31 +52,37 @@ impl Analyzer {
         Analyzer { }
     }
 
-    fn check_expr(&mut self, ctx: &mut Context, expr: Expr) -> Result<Node> {
-        match expr.kind {
-            Expr::Name(expr) => self.check_name(ctx, expr),
-            Expr::Fun(expr) => self.check_fun(ctx, expr),
-            Expr::Def(expr) => self.check_def(ctx, expr),
-            Expr::Set(expr) => self.check_set(ctx, expr),
-            Expr::Get(expr) => self.check_get(ctx, expr),
-            Expr::Apply(expr) => self.check_apply(ctx, expr),
-            Expr::Unary(expr) => self.check_unary(ctx, expr),
-            Expr::Binary(expr) => self.check_binary(ctx, expr),
-            Expr::Block(expr) => self.check_block(ctx, expr),
-            Expr::If(expr) => self.check_if(ctx, expr),
-            Expr::Tuple(expr) => self.check_tuple(ctx, expr),
-            Expr::List(expr) => self.check_list(ctx, expr),
-            Expr::Record(expr) => self.check_record(ctx, expr),
-            Expr::Variant(expr) => self.check_variant(ctx, expr),
-            Expr::String(expr) => self.check_string(expr),
-            Expr::Number(expr) => self.check_number(expr),
-            Expr::Template(expr) => self.check_template(ctx, expr),
-            Expr::Unit => Ok(Node::Unit)
+    fn check_expr(&self, ctx: &mut Context, Expr { kind, span }: Expr) -> Result<Expr> {
+        match kind {
+            ExprKind::Name(expr) => self.check_name(ctx, expr, span),
+            ExprKind::Fun(expr) => self.check_fun(ctx, expr, span),
+            ExprKind::Def(expr) => self.check_def(ctx, expr, span),
+            ExprKind::Set(expr) => self.check_set(ctx, expr, span),
+            ExprKind::Mut(expr) => self.check_mutable(ctx, expr, span),
+            ExprKind::Member(expr) => self.check_member(ctx, expr, span),
+            ExprKind::Index(expr) => self.check_index(ctx, expr, span),
+            ExprKind::Apply(expr) => self.check_apply(ctx, expr, span),
+            ExprKind::Unary(expr) => self.check_unary(ctx, expr, span),
+            ExprKind::Binary(expr) => self.check_binary(ctx, expr, span),
+            ExprKind::Partial(expr) => self.check_partial(ctx, expr, span),
+            ExprKind::Tuple(expr) => self.check_tuple(ctx, expr, span),
+            ExprKind::List(expr) => self.check_list(ctx, expr, span),
+            ExprKind::Dict(expr) => self.check_dict(ctx, expr, span),
+            ExprKind::Block(expr) => self.check_block(ctx, expr, span),
+            ExprKind::Group(expr) => self.check_group(ctx, expr, span),
+            ExprKind::Variant(expr) => self.check_variant(ctx, expr, span),
+            ExprKind::String(expr) => self.check_string(expr, span),
+            ExprKind::Number(expr) => self.check_number(expr, span),
+            ExprKind::Template(expr) => self.check_template(ctx, expr, span),
+            ExprKind::If(expr) => self.check_if(ctx, expr, span),
+            ExprKind::Match(expr) => self.check_match(ctx, expr, span),
+            ExprKind::For(expr) => self.check_for(ctx, expr, span),
+            _ => self.expr(kind, span)
         }
     }
 
-    fn check_name(&mut self, ctx: &mut Context, name: ast::Name) -> Result<Node> {
-        if ctx.find(&name.value).is_none() {
+    fn check_name(&self, ctx: &mut Context, name: Name, span: Span) -> Result<Expr> {
+        if ctx.find(&name.value) {
             // disable ctx check for the moment
 
             // return Err(NitrineError::error(
@@ -85,132 +90,90 @@ impl Analyzer {
             //     format!("cannot find value `{}` in this scope", name.value)));
         }
 
-        Ok(Node::Var(name.value))
+        self.expr(ExprKind::Name(name), span)
     }
 
-    fn check_fun(&mut self, ctx: &mut Context, function: ast::Fun) -> Result<Node> {
+    fn check_fun(&self, ctx: &mut Context, function: Fun, span: Span) -> Result<Expr> {
         let mut ctx = Context::nested(ctx);
 
-        let args = function.args
+        let params = function.params
             .into_iter()
-            .map(|arg| {
-                match arg {
-                    Expr::Name(name) => {
-                        ctx.insert(name.value.clone(), false, name.span);
-                        Ok(name.value)
-                    }
-                    Expr::Unit(_span) => {
-                        Ok(String::new())
-                    }
-                    _ => {
-                        Err(NitrineError::error(
-                            arg.span(),
-                            "Function argument destructuring is not supported for now".into()))
-                    }
-                }
+            .map(|param| {
+                ctx.insert(param.value.clone());
+                param
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Vec<_>>();
 
         let value = self.check_expr(&mut ctx, *function.value)?;
 
-        let function = args
-            .into_iter()
-            .rev()
-            .fold(value, |value, param| {
-                Node::Fun(hir::Fun { param, value: box value })
-            });
-
-        Ok(function)
+        self.expr(ExprKind::function(params, box value), span)
     }
 
-    fn check_def(&mut self, ctx: &mut Context, def: ast::Def) -> Result<Node> {
-        let name = if let Expr::Name(name) = *def.patt {
-            ctx.insert(name.value.clone(), def.mutable, name.span);
-            name.value
-        } else {
-            return Err(NitrineError::error(
-                def.span,
-                "destructuring is not supported for now".into()))
-        };
+    fn check_def(&self, ctx: &mut Context, def: Def, span: Span) -> Result<Expr> {
+        let value = self.check_expr(ctx, *def.value)?;
+        ctx.insert(def.name.value.clone());
 
-        let value = box self.check_expr(ctx, *def.value)?;
-
-        Ok(Node::Def(hir::Def { name, value }))
+        self.expr(ExprKind::def(def.name, box value), span)
     }
 
-    fn check_set(&mut self, ctx: &mut Context, set: ast::Set) -> Result<Node> {
-        let (name, span) = if let Expr::Name(name) = *set.patt {
-            (name.value, name.span)
+    fn check_set(&self, ctx: &mut Context, set: Set, span: Span) -> Result<Expr> {
+        let target = self.check_expr(ctx, *set.target)?;
+        let value  = self.check_expr(ctx, *set.value)?;
+
+        self.expr(ExprKind::set(box target, box value), span)
+    }
+
+    fn check_member(&self, ctx: &mut Context, get: Member, span: Span) -> Result<Expr> {
+        let source = self.check_expr(ctx, *get.source)?;
+
+        self.expr(ExprKind::member(box source, get.member), span)
+    }
+
+    fn check_index(&self, ctx: &mut Context, get: Index, span: Span) -> Result<Expr> {
+        let source = self.check_expr(ctx, *get.source)?;
+        let index  = self.check_expr(ctx, *get.index)?;
+
+        self.expr(ExprKind::index(box source, box index), span)
+    }
+
+    fn check_mutable(&self, ctx: &mut Context, mutable: Mut, span: Span) -> Result<Expr> {
+        let value = self.check_expr(ctx, *mutable.value)?;
+
+        // TODO check if is defined as binding (eg var = mut 10), then tag the binding as mutable if applicable
+        self.expr(ExprKind::mutable(box value), span)
+    }
+
+    fn check_unary(&self, ctx: &mut Context, unary: Unary, span: Span) -> Result<Expr> {
+        let arg = self.check_expr(ctx, *unary.rhs)?;
+
+        if unary.op.unary() {
+            self.expr(ExprKind::unary(unary.op, box arg), span)
         } else {
-            return Err(NitrineError::error(
-                set.span,
-                "destructuring is not supported for now".into()))
-        };
-
-        let value = box self.check_expr(ctx, *set.value)?;
-
-        match ctx.find(&name) {
-            Some(Info { mutable: true, .. }) => {
-                Ok(Node::Set(hir::Set { name, value }))
-            }
-            Some(Info { mutable: false, .. }) => {
-                Err(NitrineError::error(
-                    span,
-                    format!("variable `{}` not defined as mutable", name)))
-            }
-            None => {
-                Err(NitrineError::error(
-                    span,
-                    format!("cannot find value `{}` in this scope", name)))
-            }
+            self.expr(ExprKind::partial(unary.op, Some(box arg)), span)
         }
     }
 
-    fn check_unary(&mut self, ctx: &mut Context, unary: ast::Unary) -> Result<Node> {
-        let args = vec![
-            self.check_expr(ctx, *unary.expr)?,
-        ];
+    fn check_binary(&self, ctx: &mut Context, binary: Binary, span: Span) -> Result<Expr> {
+        let arg1 = self.check_expr(ctx, *binary.lhs)?;
+        let arg2 = self.check_expr(ctx, *binary.rhs)?;
 
-        let fun = Node::Var(format!("{}", unary.op).to_lowercase());
-
-        self.generate_apply(fun, args)
+        self.expr(ExprKind::binary(binary.op, box arg1, box arg2), span)
     }
 
-    fn check_binary(&mut self, ctx: &mut Context, binary: ast::Binary) -> Result<Node> {
-        let args = vec![
-            self.check_expr(ctx, *binary.lexpr)?,
-            self.check_expr(ctx, *binary.rexpr)?
-        ];
+    fn check_partial(&self, ctx: &mut Context, partial: Partial, span: Span) -> Result<Expr> {
+        let expr = partial.expr.map(|it| self.check_expr(ctx, *it)).transpose()?;
 
-        let fun = Node::Var(format!("{}", binary.op).to_lowercase());
-
-        self.generate_apply(fun, args)
+        self.expr(ExprKind::partial(partial.op, expr.map(Box::new)), span)
     }
 
-    fn check_apply(&mut self, ctx: &mut Context, app: ast::Apply) -> Result<Node> {
+    fn check_apply(&self, ctx: &mut Context, app: Apply, span: Span) -> Result<Expr> {
         let fun = self.check_expr(ctx, *app.fun)?;
+        let arg = self.check_expr(ctx, *app.arg)?;
 
-        let args = app.args
-            .into_iter()
-            .map(|arg| {
-                Ok(self.check_expr(ctx, arg)?)
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        self.generate_apply(fun, args)
+        self.expr(ExprKind::apply(box fun, box arg), span)
     }
 
-    fn generate_apply(&self, fun: Node, args: Vec<Node>) -> Result<Node> {
-        let app = args
-            .into_iter()
-            .fold(fun, |app, arg| {
-                Node::Apply(hir::Apply { fun: box app, arg: box arg })
-            });
-
-        Ok(app)
-    }
-
-    fn check_block(&mut self, ctx: &mut Context, block: ast::Block) -> Result<Node> {
+    fn check_block(&self, ctx: &mut Context, block: Block, span: Span) -> Result<Expr> {
         let mut ctx = Context::nested(ctx);
 
         let items = block.items
@@ -220,21 +183,163 @@ impl Analyzer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::Block(hir::Block { items }))
-
+        self.expr(ExprKind::block(items), span)
     }
 
-    fn check_if(&mut self, ctx: &mut Context, cond: ast::If) -> Result<Node> {
-        let ast::If { test, then, other, .. } = cond;
-
-        let test  = box self.check_expr(ctx, *test)?;
-        let then  = box self.check_expr(ctx, *then)?;
-        let other = box self.check_expr(ctx, *other)?;
-
-        Ok(Node::Cond(hir::Cond { test, then, other }))
+    fn check_group(&self, ctx: &mut Context, group: Group, span: Span) -> Result<Expr> {
+        self.check_expr(ctx, *group.inner)
     }
 
-    fn check_tuple(&mut self, ctx: &mut Context, tuple: ast::Tuple) -> Result<Node> {
+    fn check_if(&self, ctx: &mut Context, if_expr: If, span: Span) -> Result<Expr> {
+        let test = self.check_expr(ctx, *if_expr.test)?;
+        let then = self.check_expr(ctx, *if_expr.then)?;
+        let otherwise = self.check_expr(ctx, *if_expr.otherwise)?;
+
+        self.expr(ExprKind::if_(box test, box then, box otherwise), span)
+    }
+
+    fn check_match(&self, ctx: &mut Context, match_expr: Match, span: Span) -> Result<Expr> {
+        let mut conditions = match_expr.cases
+            .into_iter()
+            .map(|(patt, value)| {
+
+                let value = self.check_expr(ctx, value)?;
+                let span  = patt.span + value.span;
+
+                let (conditions, bindings) = self.check_pattern(ctx, patt, &value, span)?;
+
+                let mut conditions = conditions.into_iter();
+                let first_condition = conditions.next().unwrap(); // `match` always have at least one condition
+
+                let cond = conditions
+                    .fold(first_condition, |node, cond| {
+                        let span = cond.span + node.span;
+                        Expr::expr(
+                            ExprKind::binary(Operator::Add, box node, box cond),
+                            span)
+                    });
+
+                let mut bindings = bindings
+                    .into_iter()
+                    .map(|(name, value)| {
+                        let span = name.span;
+                        self.expr(ExprKind::def(name, box value), span)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let value = if bindings.is_empty() {
+                    value
+                } else {
+                    bindings.push(value);
+                    self.expr(ExprKind::block(bindings), Span::zero())?
+                };
+
+                Ok((cond, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let catchall = matches!(
+            conditions.last(),
+            Some((Expr { kind: ExprKind::True, .. }, _)));
+
+        todo!()
+    }
+
+    fn check_pattern(&self, ctx: &mut Context, patt: Expr, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        match patt.kind {
+            ExprKind::Name(name) => {
+                self.check_name_pattern(ctx, name, result, span)
+            }
+            ExprKind::Number(literal)
+          | ExprKind::String(literal) => {
+                self.check_literal_pattern(ctx, literal, result, span)
+            }
+            ExprKind::Any => {
+                self.check_any_pattern(ctx, result, span)
+            }
+            ExprKind::List(list) => {
+                self.check_list_pattern(ctx, list, result, span)
+            }
+            ExprKind::Tuple(tuple) => {
+                self.check_tuple_pattern(ctx, tuple, result, span)
+            }
+            ExprKind::Dict(dict) => {
+                self.check_dict_pattern(ctx, dict, result, span)
+            }
+            ExprKind::Variant(dict) => {
+                self.check_variant_pattern(ctx, dict, result, span)
+            }
+            _ => { todo!() }
+        }
+    }
+
+    fn check_name_pattern(&self, ctx: &mut Context, name: Name, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_literal_pattern(&self, ctx: &mut Context, value: String, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_any_pattern(&self, ctx: &mut Context, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_list_pattern(&self, ctx: &mut Context, list: List, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_tuple_pattern(&self, ctx: &mut Context, tuple: Tuple, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_dict_pattern(&self, ctx: &mut Context, dict: Dict, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+    fn check_variant_pattern(&self, ctx: &mut Context, variant: Variant, result: &Expr, span: Span)
+        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+    {
+        todo!()
+    }
+
+
+    fn check_for(&self, ctx: &mut Context, for_expr: For, span: Span) -> Result<Expr> {
+        let For { target, source, value } = for_expr;
+
+        let source = self.check_expr(ctx, *source)?;
+        let value  = self.check_expr(ctx, *value)?;
+
+        let expr = ExprKind::apply(
+            box Expr::expr(
+                ExprKind::apply(
+                    box Expr::expr(ExprKind::name("map".into(), span), span),
+                    box Expr::expr(ExprKind::function(
+                        vec![
+                            target,
+                        ],
+                        box value), span)),
+                span),
+            box source);
+
+        self.expr(expr, span)
+    }
+
+    fn check_tuple(&self, ctx: &mut Context, tuple: Tuple, span: Span) -> Result<Expr> {
         let items = tuple.items
             .into_iter()
             .map(|item| {
@@ -242,10 +347,10 @@ impl Analyzer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::List(hir::List { items }))
+        self.expr(ExprKind::tuple(items), span)
     }
 
-    fn check_list(&mut self, ctx: &mut Context, list: ast::List) -> Result<Node> {
+    fn check_list(&self, ctx: &mut Context, list: List, span: Span) -> Result<Expr> {
         let items = list.items
             .into_iter()
             .map(|item| {
@@ -253,27 +358,23 @@ impl Analyzer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::List(hir::List { items }))
+        self.expr(ExprKind::list(items), span)
     }
 
-    fn check_record(&mut self, ctx: &mut Context, record: ast::Record) -> Result<Node> {
-        let properties = record.properties
+    fn check_dict(&self, ctx: &mut Context, record: Dict, span: Span) -> Result<Expr> {
+        let entries = record.entries
             .into_iter()
             .map(|(key, val)| {
-                Ok((key.value, self.check_expr(ctx, val)?))
+                let key = self.check_expr(ctx, key)?;
+                let val = self.check_expr(ctx, val)?;
+                Ok((key, val))
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::Record(hir::Record { properties }))
+        self.expr(ExprKind::dict(entries), span)
     }
 
-    fn check_get(&mut self, ctx: &mut Context, get: ast::Get) -> Result<Node> {
-        let node = box self.check_expr(ctx, *get.expr)?;
-
-        Ok(Node::Get(hir::Get { node, name: get.name.value }))
-    }
-
-    fn check_variant(&mut self, ctx: &mut Context, variant: ast::Variant) -> Result<Node> {
+    fn check_variant(&self, ctx: &mut Context, variant: Variant, span: Span) -> Result<Expr> {
         let values = variant.values
             .into_iter()
             .map(|value| {
@@ -281,45 +382,68 @@ impl Analyzer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::Variant(hir::Variant { name: variant.name.value, values }))
+        self.expr(ExprKind::variant(variant.name, values), span)
     }
 
-    fn check_string(&mut self, Expr { kind: ExprKind::String(literal), span }: Expr) -> Result<Node> {
-        Ok(Node::String(literal.value))
+    fn check_string(&self, value: String, span: Span) -> Result<Expr> {
+        self.expr(ExprKind::String(value), span)
     }
 
-    fn check_number(&mut self, literal: ast::Literal) -> Result<Node> {
-        Ok(Node::Number(literal.value))
+    fn check_number(&self, value: String, span: Span) -> Result<Expr> {
+        self.expr(ExprKind::Number(value), span)
     }
 
-    fn check_template(&mut self, ctx: &mut Context, template: ast::Template) -> Result<Node> {
-        let elements = template.elements
+    fn check_template(&self, ctx: &mut Context, template: Template, span: Span) -> Result<Expr> {
+        let mut elements = template.elements
             .into_iter()
-            .map(|elements| {
-                Ok(self.check_expr(ctx, elements)?)
+            .map(|element| {
+                let element = self.check_expr(ctx, element)?;
+
+                let element = if let ExprKind::String(_) = element.kind {
+                    element
+                } else {
+                    Expr::expr(
+                        ExprKind::apply(
+                            box Expr::expr(ExprKind::name("string".into(), element.span), span),
+                            box element),
+                        span)
+                };
+
+                Ok(element)
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Node::Template(hir::Template { elements }))
+        let last = elements.pop().unwrap();
+
+        let concat = elements
+            .into_iter()
+            .fold(last, |chain, elem| {
+                let span = chain.span + elem.span;
+
+                Expr::expr(
+                    ExprKind::binary(Operator::Concat, box chain, box elem),
+                    span)
+            });
+
+        Ok(concat)
+    }
+
+    fn expr(&self, kind: ExprKind, span: Span) -> Result<Expr> {
+        Ok(Expr { kind, span })
     }
 }
 
-pub fn analyze(module: ast::Module) -> Result<hir::Module> {
-    let mut analyzer = Analyzer::new();
+pub fn analyze(module: Module) -> Result<Module> {
+    let analyzer = Analyzer::new();
 
     let mut global = Context::new();
 
-    let nodes = module.definitions
+    let nodes = module.nodes
         .into_iter()
-        .map(|def| {
-            global.insert(def.name.value.clone(), false, def.span);
-
-            let name  = def.name.value;
-            let value = box analyzer.check_expr(&mut global, *def.value)?;
-
-            Ok(Node::Def(hir::Def { name, value }))
+        .map(|node| {
+            analyzer.check_expr(&mut global, node)
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(hir::Module { name: module.name, nodes })
+    Ok(Module { nodes })
 }
