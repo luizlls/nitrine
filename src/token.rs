@@ -73,7 +73,6 @@ pub enum KeywordKind {
     If,
     Then,
     Else,
-    For,
     Match,
 }
 
@@ -85,10 +84,24 @@ impl fmt::Display for KeywordKind {
             KeywordKind::If => write!(f, "if"),
             KeywordKind::Then => write!(f, "then"),
             KeywordKind::Else => write!(f, "else"),
-            KeywordKind::For => write!(f, "for"),
             KeywordKind::Mut => write!(f, "mut"),
             KeywordKind::Match => write!(f, "match"),
         }
+    }
+}
+
+pub fn get_keyword(key: &str) -> Option<TokenKind> {
+    match key {
+        "fn"    => Some(TokenKind::Keyword(KeywordKind::Fn)),
+        "if"    => Some(TokenKind::Keyword(KeywordKind::If)),
+        "then"  => Some(TokenKind::Keyword(KeywordKind::Then)),
+        "else"  => Some(TokenKind::Keyword(KeywordKind::Else)),
+        "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
+        "match" => Some(TokenKind::Keyword(KeywordKind::Match)),
+        "and"   => Some(TokenKind::Operator(OperatorKind::And)),
+        "or"    => Some(TokenKind::Operator(OperatorKind::Or)),
+        "not"   => Some(TokenKind::Operator(OperatorKind::Not)),
+        _ => None,
     }
 }
 
@@ -188,6 +201,37 @@ impl fmt::Display for OperatorKind {
     }
 }
 
+pub fn get_operator(key: &str) -> Option<TokenKind> {
+    match key {
+        ":"   => Some(TokenKind::Symbol(SymbolKind::Colon)),
+        "."   => Some(TokenKind::Symbol(SymbolKind::Dot)),
+        "="   => Some(TokenKind::Symbol(SymbolKind::Equals)),
+        ":="  => Some(TokenKind::Symbol(SymbolKind::Warlus)),
+        "->"  => Some(TokenKind::Symbol(SymbolKind::Arrow)),
+        "+"   => Some(TokenKind::Operator(OperatorKind::Add)),
+        "-"   => Some(TokenKind::Operator(OperatorKind::Sub)),
+        "*"   => Some(TokenKind::Operator(OperatorKind::Mul)),
+        "/"   => Some(TokenKind::Operator(OperatorKind::Div)),
+        "%"   => Some(TokenKind::Operator(OperatorKind::Rem)),
+        "=="  => Some(TokenKind::Operator(OperatorKind::Eq)),
+        "!="  => Some(TokenKind::Operator(OperatorKind::Ne)),
+        "<"   => Some(TokenKind::Operator(OperatorKind::Lt)),
+        "<="  => Some(TokenKind::Operator(OperatorKind::Le)),
+        ">"   => Some(TokenKind::Operator(OperatorKind::Gt)),
+        ">="  => Some(TokenKind::Operator(OperatorKind::Ge)),
+        "&&&" => Some(TokenKind::Operator(OperatorKind::BitAnd)),
+        "|||" => Some(TokenKind::Operator(OperatorKind::BitOr)),
+        "~~~" => Some(TokenKind::Operator(OperatorKind::BitNot)),
+        "^^^" => Some(TokenKind::Operator(OperatorKind::BitXor)),
+        ">>>" => Some(TokenKind::Operator(OperatorKind::BitShl)),
+        "<<<" => Some(TokenKind::Operator(OperatorKind::BitShr)),
+        "++"  => Some(TokenKind::Operator(OperatorKind::Concat)),
+        "|>"  => Some(TokenKind::Operator(OperatorKind::LPipe)),
+        "<|"  => Some(TokenKind::Operator(OperatorKind::RPipe)),
+        _ => None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LiteralKind {
     Lower,
@@ -258,52 +302,5 @@ impl fmt::Display for TokenKind {
             TokenKind::Error(error) => write!(f, "{}", error),
             TokenKind::EOF => write!(f, "end of file"),
         }
-    }
-}
-
-pub fn get_keyword(key: &str) -> Option<TokenKind> {
-    match key {
-        "fn"    => Some(TokenKind::Keyword(KeywordKind::Fn)),
-        "if"    => Some(TokenKind::Keyword(KeywordKind::If)),
-        "then"  => Some(TokenKind::Keyword(KeywordKind::Then)),
-        "else"  => Some(TokenKind::Keyword(KeywordKind::Else)),
-        "for"   => Some(TokenKind::Keyword(KeywordKind::For)),
-        "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
-        "match" => Some(TokenKind::Keyword(KeywordKind::Match)),
-        "and"   => Some(TokenKind::Operator(OperatorKind::And)),
-        "or"    => Some(TokenKind::Operator(OperatorKind::Or)),
-        "not"   => Some(TokenKind::Operator(OperatorKind::Not)),
-        _ => None,
-    }
-}
-
-pub fn get_operator(key: &str) -> Option<TokenKind> {
-    match key {
-        ":"   => Some(TokenKind::Symbol(SymbolKind::Colon)),
-        "."   => Some(TokenKind::Symbol(SymbolKind::Dot)),
-        "="   => Some(TokenKind::Symbol(SymbolKind::Equals)),
-        ":="  => Some(TokenKind::Symbol(SymbolKind::Warlus)),
-        "->"  => Some(TokenKind::Symbol(SymbolKind::Arrow)),
-        "+"   => Some(TokenKind::Operator(OperatorKind::Add)),
-        "-"   => Some(TokenKind::Operator(OperatorKind::Sub)),
-        "*"   => Some(TokenKind::Operator(OperatorKind::Mul)),
-        "/"   => Some(TokenKind::Operator(OperatorKind::Div)),
-        "%"   => Some(TokenKind::Operator(OperatorKind::Rem)),
-        "=="  => Some(TokenKind::Operator(OperatorKind::Eq)),
-        "!="  => Some(TokenKind::Operator(OperatorKind::Ne)),
-        "<"   => Some(TokenKind::Operator(OperatorKind::Lt)),
-        "<="  => Some(TokenKind::Operator(OperatorKind::Le)),
-        ">"   => Some(TokenKind::Operator(OperatorKind::Gt)),
-        ">="  => Some(TokenKind::Operator(OperatorKind::Ge)),
-        "&&&" => Some(TokenKind::Operator(OperatorKind::BitAnd)),
-        "|||" => Some(TokenKind::Operator(OperatorKind::BitOr)),
-        "~~~" => Some(TokenKind::Operator(OperatorKind::BitNot)),
-        "^^^" => Some(TokenKind::Operator(OperatorKind::BitXor)),
-        ">>>" => Some(TokenKind::Operator(OperatorKind::BitShl)),
-        "<<<" => Some(TokenKind::Operator(OperatorKind::BitShr)),
-        "++"  => Some(TokenKind::Operator(OperatorKind::Concat)),
-        "|>"  => Some(TokenKind::Operator(OperatorKind::LPipe)),
-        "<|"  => Some(TokenKind::Operator(OperatorKind::RPipe)),
-        _ => None
     }
 }
