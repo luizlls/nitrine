@@ -56,11 +56,6 @@ impl<'src> Lexer<'src> {
         self.peek = self.chars.next();
     }
 
-    fn line(&mut self) {
-        self.line += 1;
-        self.bump();
-    }
-
     fn span(&self) -> Span {
         Span::new(self.line, self.start, self.offset)
     }
@@ -74,79 +69,78 @@ impl<'src> Lexer<'src> {
             return self.template(false);
         }
 
-        loop {
-            self.align();
+        self.align();
 
-            match self.curr {
-                Some('a'..='z') => {
-                    return Some(self.lower());
-                }
-                Some('A'..='Z') => {
-                    return Some(self.upper());
-                }
-                Some('0'..='9') => {
-                    return Some(self.number());
-                }
-                Some('_') if self.is_alpha(self.peek) => {
-                    return Some(self.lower());
-                }
-                Some('_') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::Any));
-                }
-                Some('(') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::OpeningParen));
-                }
-                Some(')') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::ClosingParen));
-                }
-                Some('{') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::OpeningBrace));
-                }
-                Some('}') if self.mode == Mode::Template => {
-                    self.mode = Mode::String;
-                    return self.single(TokenKind::Symbol(SymbolKind::ClosingBrace));
-                }
-                Some('}') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::ClosingBrace));
-                }
-                Some('[') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::OpeningBracket));
-                }
-                Some(']') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::ClosingBracket));
-                }
-                Some(',') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::Comma));
-                }
-                Some(';') => {
-                    return self.single(TokenKind::Symbol(SymbolKind::Semi));
-                }
-                Some('"') => {
-                    return self.template(true);
-                }
-                Some('/') if self.peek == Some('/') => {
-                    self.comment();
-                    continue;
-                }
-                Some(' ')
-              | Some('\t')
-              | Some('\r') => {
-                    self.space();
-                    continue;
-                }
-                Some('\n') => {
-                    self.line();
-                    continue;
-                }
-                Some(_) if self.is_symbol(self.curr) => {
-                    return Some(self.operator());
-                }
-                None => {
-                    return None;
-                }
-                Some(_) => {
-                    return Some(TokenKind::Error(ErrorKind::InvalidCharacter));
-                }
+        match self.curr {
+            Some('a'..='z') => {
+                Some(self.lower())
+            }
+            Some('A'..='Z') => {
+                Some(self.upper())
+            }
+            Some('_') if self.is_alpha(self.peek) => {
+                Some(self.lower())
+            }
+            Some('0'..='9') => {
+                Some(self.number(false))
+            }
+            Some('+')
+          | Some('-') if self.is_number(self.peek) => {
+                Some(self.number(true))
+            }
+            Some('"') => {
+                self.template(true)
+            }
+            Some('(') => {
+                self.single(TokenKind::Symbol(SymbolKind::OpeningParen))
+            }
+            Some(')') => {
+                self.single(TokenKind::Symbol(SymbolKind::ClosingParen))
+            }
+            Some('{') => {
+                self.single(TokenKind::Symbol(SymbolKind::OpeningBrace))
+            }
+            Some('}') if self.mode == Mode::Template => {
+                self.mode = Mode::String;
+                self.single(TokenKind::Symbol(SymbolKind::ClosingBrace))
+            }
+            Some('}') => {
+                self.single(TokenKind::Symbol(SymbolKind::ClosingBrace))
+            }
+            Some('[') => {
+                self.single(TokenKind::Symbol(SymbolKind::OpeningBracket))
+            }
+            Some(']') => {
+                self.single(TokenKind::Symbol(SymbolKind::ClosingBracket))
+            }
+            Some(',') => {
+                self.single(TokenKind::Symbol(SymbolKind::Comma))
+            }
+            Some(';') => {
+                self.single(TokenKind::Symbol(SymbolKind::Semi))
+            }
+            Some('_') => {
+                self.single(TokenKind::Symbol(SymbolKind::Any))
+            }
+            Some('/') if self.peek == Some('/') => {
+                self.comment()
+            }
+            Some(' ')
+          | Some('\t')
+          | Some('\r') => {
+                self.space()
+            }
+            Some('\n') => {
+                self.line()
+            }
+            Some(_) if self.is_symbol(self.curr) => {
+                Some(self.operator())
+            }
+            None => {
+                None
+            }
+            Some(_) => {
+                Some(TokenKind::Error(ErrorKind::InvalidCharacter))
             }
         }
     }
@@ -277,7 +271,11 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn number(&mut self) -> TokenKind {
+    fn number(&mut self, prefix: bool) -> TokenKind {
+        if prefix {
+            self.bump();
+        }
+
         let mut float = false;
 
         while self.is_number(self.curr) {
@@ -292,24 +290,35 @@ impl<'src> Lexer<'src> {
         TokenKind::Literal(LiteralKind::Number)
     }
 
-    fn space(&mut self) {
+    fn space(&mut self) -> Option<TokenKind> {
         while matches!(self.curr, Some('\r') | Some('\t') | Some(' ')) {
             self.bump();
         }
+
+        self.next_kind()
     }
 
-    fn comment(&mut self) {
+    fn line(&mut self) -> Option<TokenKind> {
+        self.line += 1;
+        self.bump();
+
+        self.next_kind()
+    }
+
+    fn comment(&mut self) -> Option<TokenKind> {
         loop {
             match self.curr {
                 Some('\n')
               | None => {
-                    return;
+                    break;
                 }
                 _ => {
                     self.bump();
                 }
             }
         }
+
+        self.next_kind()
     }
 }
 

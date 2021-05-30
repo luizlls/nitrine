@@ -29,15 +29,13 @@ impl<'ctx> Context<'ctx> {
         self.items.insert(name, ());
     }
 
-    fn find(&self, name: &String) -> bool {
-        if let Some(_) = self.items.get(name) {
+    fn find(&self, name: &str) -> bool {
+        if self.items.get(name).is_some() {
             true
+        } else if let Some(parent) = self.parent {
+            parent.find(name)
         } else {
-            if let Some(ref parent) = self.parent {
-                parent.find(name)
-            } else {
-                false
-            }
+            false
         }
     }
 }
@@ -45,6 +43,11 @@ impl<'ctx> Context<'ctx> {
 struct Analyzer {
 }
 
+
+struct PatternBinding {
+    name: Name,
+    value: Expr,
+}
 
 impl Analyzer {
     fn new() -> Analyzer {
@@ -54,7 +57,7 @@ impl Analyzer {
     fn check_expr(&self, ctx: &mut Context, expr: Expr) -> Result<Expr> {
         match expr {
             Expr::Name(expr) => self.check_name(ctx, expr),
-            Expr::Fun(expr) => self.check_fun(ctx, expr),
+            Expr::Fn(expr) => self.check_fun(ctx, expr),
             Expr::Def(expr) => self.check_def(ctx, expr),
             Expr::Set(expr) => self.check_set(ctx, expr),
             Expr::Mut(expr) => self.check_mutable(ctx, expr),
@@ -142,11 +145,7 @@ impl Analyzer {
     fn check_unary(&self, ctx: &mut Context, unary: Unary) -> Result<Expr> {
         let arg = self.check_expr(ctx, *unary.rhs)?;
 
-        if unary.op.unary() {
-            Ok(Expr::unary(unary.op, box arg, unary.span))
-        } else {
-            Ok(Expr::partial(unary.op, Some(box arg), unary.span))
-        }
+        Ok(Expr::unary(unary.op, box arg, unary.span))
     }
 
     fn check_binary(&self, ctx: &mut Context, binary: Binary) -> Result<Expr> {
@@ -157,9 +156,10 @@ impl Analyzer {
     }
 
     fn check_partial(&self, ctx: &mut Context, partial: Partial) -> Result<Expr> {
-        let expr = partial.expr.map(|it| self.check_expr(ctx, *it)).transpose()?;
+        let lhs = partial.lhs.map(|expr| self.check_expr(ctx, *expr)).transpose()?.map(Box::new);
+        let rhs = partial.rhs.map(|expr| self.check_expr(ctx, *expr)).transpose()?.map(Box::new);
 
-        Ok(Expr::partial(partial.op, expr.map(Box::new), partial.span))
+        Ok(Expr::partial(partial.op, lhs, rhs, partial.span))
     }
 
     fn check_apply(&self, ctx: &mut Context, app: Apply) -> Result<Expr> {
@@ -175,7 +175,7 @@ impl Analyzer {
         let items = block.items
             .into_iter()
             .map(|item| {
-                Ok(self.check_expr(&mut ctx, item)?)
+                self.check_expr(&mut ctx, item)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -220,7 +220,7 @@ impl Analyzer {
                 } else {
                     let mut bindings = bindings
                         .into_iter()
-                        .map(|(name, value)| {
+                        .map(|PatternBinding { name, value }| {
                             let span = name.span;
                             Expr::def(name, box value, span)
                         })
@@ -238,7 +238,7 @@ impl Analyzer {
     }
 
     fn check_pattern(&self, ctx: &mut Context, patt: Expr, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         match patt {
             Expr::Name(name) => {
@@ -268,43 +268,43 @@ impl Analyzer {
     }
 
     fn check_name_pattern(&self, ctx: &mut Context, name: Name, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_literal_pattern(&self, ctx: &mut Context, literal: Literal, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_any_pattern(&self, ctx: &mut Context, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_list_pattern(&self, ctx: &mut Context, list: List, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_tuple_pattern(&self, ctx: &mut Context, tuple: Tuple, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_dict_pattern(&self, ctx: &mut Context, dict: Dict, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
 
     fn check_variant_pattern(&self, ctx: &mut Context, variant: Variant, value: &Expr)
-        -> Result<(Vec<Expr>, Vec<(Name, Expr)>)>
+        -> Result<(Vec<Expr>, Vec<PatternBinding>)>
     {
         todo!()
     }
@@ -313,7 +313,7 @@ impl Analyzer {
         let items = tuple.items
             .into_iter()
             .map(|item| {
-                Ok(self.check_expr(ctx, item)?)
+                self.check_expr(ctx, item)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -324,7 +324,7 @@ impl Analyzer {
         let items = list.items
             .into_iter()
             .map(|item| {
-                Ok(self.check_expr(ctx, item)?)
+                self.check_expr(ctx, item)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -348,7 +348,7 @@ impl Analyzer {
         let values = variant.values
             .into_iter()
             .map(|value| {
-                Ok(self.check_expr(ctx, value)?)
+                self.check_expr(ctx, value)
             })
             .collect::<Result<Vec<_>>>()?;
 

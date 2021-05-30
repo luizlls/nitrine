@@ -74,6 +74,7 @@ pub enum KeywordKind {
     Then,
     Else,
     Match,
+    Case,
 }
 
 
@@ -86,6 +87,7 @@ impl fmt::Display for KeywordKind {
             KeywordKind::Else => write!(f, "else"),
             KeywordKind::Mut => write!(f, "mut"),
             KeywordKind::Match => write!(f, "match"),
+            KeywordKind::Case => write!(f, "case"),
         }
     }
 }
@@ -98,6 +100,7 @@ pub fn get_keyword(key: &str) -> Option<TokenKind> {
         "else"  => Some(TokenKind::Keyword(KeywordKind::Else)),
         "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
         "match" => Some(TokenKind::Keyword(KeywordKind::Match)),
+        "case"  => Some(TokenKind::Keyword(KeywordKind::Case)),
         "and"   => Some(TokenKind::Operator(OperatorKind::And)),
         "or"    => Some(TokenKind::Operator(OperatorKind::Or)),
         "not"   => Some(TokenKind::Operator(OperatorKind::Not)),
@@ -142,6 +145,10 @@ pub enum Associativity {
 }
 
 impl OperatorKind {
+
+    pub fn is_unary(&self) -> bool {
+        matches!(self, OperatorKind::Not | OperatorKind::BitNot)
+    }
 
     pub fn precedence(&self) -> Option<(Precedence, Associativity)> {
         match self {

@@ -28,19 +28,30 @@ impl<'s> Parser<'s> {
         parser
     }
 
-    fn parse_name(&mut self) -> Result<Name> {
-        let span = self.token.span;
-        self.eat(TokenKind::Literal(LiteralKind::Lower))?;
+    fn parse_module(mut self) -> Result<Module> {
+        let mut nodes = vec![];
 
-        let value = self.source.content[span.range()].into();
+        while !self.done() {
+            let node = match self.token.kind {
+                TokenKind::Literal(LiteralKind::Lower) => {
+                    self.parse_name()
+                        .and_then(|name| self.parse_def(name))?
+                }
+                _ => {
+                    return Err(self.handle_unexpected())
+                }
+            };
 
-        Ok(Name { value, span })
+            nodes.push(node);
+        }
+
+        Ok(Module { nodes })
     }
 
     fn parse_expr(&mut self) -> Result<Expr> {
         match self.token.kind {
             TokenKind::Keyword(KeywordKind::Fn) => {
-                self.parse_fn()
+                self.parse_lambda()
             }
             TokenKind::Keyword(KeywordKind::If) => {
                 self.parse_if()
@@ -57,26 +68,22 @@ impl<'s> Parser<'s> {
             _ if self.start_term() => {
                 let mut value = self.parse_term()?;
 
-                if let Expr::Name(_) = value {
+                if let Expr::Name(name) = value {
                     value = match self.token.kind {
                         TokenKind::Symbol(SymbolKind::Equals) => {
-                            self.parse_def(value)?
+                            self.parse_def(name)?
                         }
                         TokenKind::Symbol(SymbolKind::Warlus) => {
-                            self.parse_set(value)?
+                            self.parse_set(Expr::Name(name))?
                         }
                         _ if self.start_term() && self.match_lines() => {
-                            self.parse_apply(value)?
+                            self.parse_apply(Expr::Name(name))?
                         }
-                        _ => value
+                        _ => Expr::Name(name)
                     };
                 }
 
-                if let TokenKind::Operator(_) = self.token.kind {
-                    self.parse_binary(Some(value), 0)
-                } else {
-                    Ok(value)
-                }
+                self.parse_binary(Some(value), 0)
             }
             _ => {
                 Err(self.handle_unexpected())
@@ -92,7 +99,9 @@ impl<'s> Parser<'s> {
           | TokenKind::Literal(LiteralKind::Number)
           | TokenKind::Template(TemplateKind::StringStart)
           | TokenKind::Symbol(SymbolKind::OpeningParen)
-          | TokenKind::Symbol(SymbolKind::OpeningBracket))
+          | TokenKind::Symbol(SymbolKind::OpeningBracket)
+          | TokenKind::Symbol(SymbolKind::OpeningBrace)
+          | TokenKind::Symbol(SymbolKind::Any))
     }
 
     fn parse_term(&mut self) -> Result<Expr> {
@@ -119,8 +128,12 @@ impl<'s> Parser<'s> {
             TokenKind::Symbol(SymbolKind::OpeningBracket) => {
                 self.parse_bracket()
             }
-            TokenKind::Operator(_) => {
-                self.parse_unary()
+            TokenKind::Symbol(SymbolKind::OpeningBrace) => {
+                self.parse_record()
+            }
+            TokenKind::Symbol(SymbolKind::Any) => {
+                let span = self.bump();
+                Ok(Expr::Any(span))
             }
             _ => {
                 Err(self.handle_unexpected())
@@ -128,31 +141,26 @@ impl<'s> Parser<'s> {
         }
     }
 
-    fn parse_term_and_apply(&mut self) -> Result<Expr> {
-        let term = self.parse_term()?;
+    fn parse_name(&mut self) -> Result<Name> {
+        let span = self.token.span;
 
-        if self.start_term() && self.match_lines() {
-            self.parse_apply(term)
-        } else {
-            Ok(term)
-        }
+        self.eat(TokenKind::Literal(LiteralKind::Lower))?;
+        let value = self.source.content[span.range()].into();
+
+        Ok(Name { value, span })
     }
 
-    fn parse_def(&mut self, patt: Expr) -> Result<Expr> {
-        let start = patt.span();
+    fn parse_def(&mut self, name: Name) -> Result<Expr> {
+        let start = name.span;
 
-        let name = if let Expr::Name(name) = patt {
-            name
+        let value = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningParen)) {
+            self.parse_function()?
         } else {
-            return Err(NitrineError::error(
-                start,
-                "Destructuring assignment is not supported".into()));
+            self.eat(TokenKind::Symbol(SymbolKind::Equals))?;
+            self.parse_expr()?
         };
 
-        self.eat(TokenKind::Symbol(SymbolKind::Equals))?;
-        let value = box self.parse_expr()?;
-
-        Ok(Expr::def(name, value, self.spanned(start)))
+        Ok(Expr::def(name, box value, self.spanned(start)))
     }
 
     fn parse_set(&mut self, expr: Expr) -> Result<Expr> {
@@ -206,7 +214,6 @@ impl<'s> Parser<'s> {
             if self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace)) {
                 break;
             }
-
             items.push(self.parse_expr()?);
         }
 
@@ -215,31 +222,42 @@ impl<'s> Parser<'s> {
         Ok(Expr::block(items, self.spanned(start)))
     }
 
-    fn parse_fn(&mut self) -> Result<Expr> {
+    fn parse_function(&mut self) -> Result<Expr> {
+        let start = self.span();
+
+        let params = self.parse_block_of(
+            TokenKind::Symbol(SymbolKind::OpeningParen),
+            TokenKind::Symbol(SymbolKind::ClosingParen),
+            Self::parse_name)?;
+
+        self.eat(TokenKind::Symbol(SymbolKind::Equals))?;
+
+        let value = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningBrace)) {
+            self.parse_block()?
+        } else {
+            self.parse_expr()?
+        };
+
+        Ok(Expr::function(params, box value, self.spanned(start)))
+    }
+
+    fn parse_lambda(&mut self) -> Result<Expr> {
         let start = self.span();
 
         self.eat(TokenKind::Keyword(KeywordKind::Fn))?;
 
-        let mut params = self.parse_while(
+        let params = self.parse_while(
             Self::parse_name,
-            |this| this.match_lines() && this.token_is(TokenKind::Literal(LiteralKind::Lower)))?;
+            |this| this.token_is(TokenKind::Literal(LiteralKind::Lower)))?;
 
-        let value = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningBrace)) && self.match_lines() {
+        let value = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningBrace)) {
             self.parse_block()?
-        } else if self.match_lines() {
-            self.parse_expr()?
-        } else if params.len() > 1 {
-            let name = params.pop().unwrap();
-            Expr::Name(name)
         } else {
-            return Err(NitrineError::error(
-                self.token.span,
-                "fn `value` must start in the same line".into()));
+            self.eat(TokenKind::Symbol(SymbolKind::Arrow))?;
+            self.parse_expr()?
         };
 
-        let value = box value;
-
-        Ok(Expr::function(params, value, self.spanned(start)))
+        Ok(Expr::function(params, box value, self.spanned(start)))
     }
 
     fn parse_variant(&mut self) -> Result<Expr> {
@@ -272,13 +290,28 @@ impl<'s> Parser<'s> {
             |this| this.start_term() && this.match_lines())
     }
 
-    fn parse_apply(&mut self, callee: Expr) -> Result<Expr> {
+    fn parse_apply(&mut self, fun: Expr) -> Result<Expr> {
+        match fun {
+            Expr::Name(_)
+          | Expr::Apply(_)
+          | Expr::Group(_)
+          | Expr::Member(_)
+          | Expr::Index(_) => {},
+            _ => {
+                return Ok(fun)
+            }
+        };
+
+        if !self.match_lines() {
+            return Ok(fun)
+        }
+
         let apply = self.parse_args()?
-            .into_iter()
-            .fold(callee, |callee, arg| {
-                let span = callee.span();
-                Expr::apply(box callee, box arg, span)
-            });
+        .into_iter()
+        .fold(fun, |callee, arg| {
+            let span = callee.span();
+            Expr::apply(box callee, box arg, span)
+        });
 
         Ok(apply)
     }
@@ -359,7 +392,6 @@ impl<'s> Parser<'s> {
             Dict,
         }
 
-
         let start = self.span();
 
         let mut kind = CollectionKind::None;
@@ -418,7 +450,7 @@ impl<'s> Parser<'s> {
 
         let start = self.span();
 
-        let mut items = self.block_of(
+        let mut items = self.parse_block_of(
             TokenKind::Symbol(SymbolKind::OpeningParen),
             TokenKind::Symbol(SymbolKind::ClosingParen),
             Self::parse_expr)?;
@@ -432,6 +464,47 @@ impl<'s> Parser<'s> {
         } else {
             Expr::tuple(items, span)
         })
+    }
+
+
+    fn parse_record(&mut self) -> Result<Expr> {
+        let start = self.span();
+
+        let properties = self.parse_block_of(
+            TokenKind::Symbol(SymbolKind::OpeningBrace),
+            TokenKind::Symbol(SymbolKind::ClosingBrace),
+            Self::parse_property)?;
+
+        Ok(Expr::record(properties, self.spanned(start)))
+    }
+
+    fn parse_property(&mut self) -> Result<(Name, Expr)> {
+        let key = self.parse_name()?;
+
+        if !self.token_is(TokenKind::Symbol(SymbolKind::Comma))
+        && !self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace))
+        && !self.match_lines()
+        {
+            return Err(NitrineError::error(
+                self.span(),
+                "The `name` and `value` of the property must start at the same line".into()));
+        }
+
+        let val = match self.token.kind {
+            TokenKind::Symbol(SymbolKind::Equals) => {
+                self.bump();
+                self.parse_expr()?
+            }
+            TokenKind::Symbol(SymbolKind::OpeningBrace) => {
+                self.parse_record()?
+            }
+            TokenKind::Symbol(SymbolKind::OpeningParen) => {
+                self.parse_function()?
+            }
+            _ => Expr::Name(key.clone())
+        };
+
+        Ok((key, val))
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
@@ -449,7 +522,7 @@ impl<'s> Parser<'s> {
         if self.prev.kind == TokenKind::Symbol(SymbolKind::OpeningParen)
         && self.peek.kind == TokenKind::Symbol(SymbolKind::ClosingParen) {
             self.bump();
-            return Ok(Expr::partial(operator, None, self.spanned(span)));
+            return Ok(Expr::partial(operator, None, None, self.spanned(span)));
         }
 
         self.bump();
@@ -460,9 +533,15 @@ impl<'s> Parser<'s> {
                 "Unary (infix) or partial operators must be in the same line as the operand".into()));
         }
 
-        let expr = box self.parse_term()?;
+        let expr = self.parse_term()?;
 
-        Ok(Expr::unary(operator, expr, self.spanned(span)))
+        let span = self.spanned(span);
+
+        if kind.is_unary() {
+            Ok(Expr::unary(operator, box expr, span))
+        } else {
+            Ok(Expr::partial(operator, None, Some(box expr), span))
+        }
     }
 
     fn parse_binary(&mut self, expr: Option<Expr>, minimum: u8) -> Result<Expr> {
@@ -470,7 +549,7 @@ impl<'s> Parser<'s> {
         let mut expr = if let Some(expr) = expr {
             expr
         } else {
-            self.parse_term_and_apply()?
+            self.parse_term().and_then(|term| self.parse_apply(term))?
         };
 
         while let TokenKind::Operator(operator) = self.token.kind {
@@ -480,21 +559,27 @@ impl<'s> Parser<'s> {
                     break;
                 }
 
-                let span = self.token.span;
+                let operator = self.operator(operator);
                 self.bump();
 
-                let operator = self.operator(operator);
+                // partial application of operators
+                if self.token_is(TokenKind::Symbol(SymbolKind::ClosingParen)) {
+                    let span = expr.span() + self.prev.span;
+                    return Ok(Expr::partial(operator, Some(box expr), None, span));
+                }
 
-                let fix = match associativity {
+                let weight = match associativity {
                     Associativity::Right => 0,
                     Associativity::Left  => 1,
                     Associativity::None  => 1,
                 };
 
-                let lexpr = box expr;
-                let rexpr = box self.parse_binary(None, precedence + fix)?;
+                let rhs = self.parse_binary(None, precedence + weight)?;
+                let lhs = expr;
 
-                expr = Expr::binary(operator, lexpr, rexpr, self.spanned(span));
+                let span = lhs.span() + rhs.span();
+
+                expr = Expr::binary(operator, box lhs, box rhs, span);
             }
         }
 
@@ -559,17 +644,17 @@ impl<'s> Parser<'s> {
         self.eat(TokenKind::Keyword(KeywordKind::Match))?;
         let value = self.parse_expr()?;
 
-        self.eat(TokenKind::Symbol(SymbolKind::OpeningBrace))?;
+        let braces = self.maybe_eat(TokenKind::Symbol(SymbolKind::OpeningBrace));
 
         let mut cases = vec![];
 
-        loop {
+        while self.maybe_eat(TokenKind::Keyword(KeywordKind::Case)) {
             let patt = self.parse_term()?;
 
             if matches!(patt, Expr::Template(_) | Expr::Group(_)) {
                 return Err(NitrineError::error(
                     patt.span(),
-                    "Pattern not supported".into()));
+                    format!("`{}` pattern not supported", patt.display_name())));
             }
 
             self.eat(TokenKind::Symbol(SymbolKind::Arrow))?;
@@ -587,7 +672,21 @@ impl<'s> Parser<'s> {
             }
         }
 
-        self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
+        if self.maybe_eat(TokenKind::Keyword(KeywordKind::Else)) {
+            let span = self.span();
+
+            let result = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningBrace)) {
+                self.parse_block()?
+            } else {
+                self.parse_expr()?
+            };
+
+            cases.push((Expr::Any(span), result));
+        }
+
+        if braces {
+            self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
+        }
 
         Ok(Expr::pattern_match(box value, cases, self.spanned(start)))
     }
@@ -606,7 +705,7 @@ impl<'s> Parser<'s> {
         Ok(result)
     }
 
-    fn block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
+    fn parse_block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
         -> Result<Vec<T>>
     where
         F: FnMut(&mut Self) -> Result<T>,
@@ -632,14 +731,16 @@ impl<'s> Parser<'s> {
         Ok(result)
     }
 
-    fn bump(&mut self) {
+    fn bump(&mut self) -> Span {
         self.prev  = self.token;
         self.token = self.peek;
         self.peek  = if let Some(token) = self.lexer.next() {
             token
         } else {
             Token::default()
-        }
+        };
+
+        self.prev.span
     }
 
     fn done(&self) -> bool {
@@ -704,14 +805,6 @@ impl<'s> Parser<'s> {
     }
 }
 
-pub fn parse<'s>(source: &'s Source) -> Result<Module> {
-    let mut parser = Parser::new(source);
-
-    let mut nodes = vec![];
-
-    while !parser.done() {
-        nodes.push(parser.parse_expr()?);
-    }
-
-    Ok(Module { nodes })
+pub fn parse(source: &Source) -> Result<Module> {
+    Parser::new(source).parse_module()
 }

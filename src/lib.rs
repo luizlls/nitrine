@@ -1,6 +1,5 @@
 #![feature(box_syntax)]
 #![feature(box_patterns)]
-#![feature(try_trait)]
 #![macro_use]
 
 //pub mod compiler;

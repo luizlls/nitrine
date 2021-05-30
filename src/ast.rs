@@ -11,7 +11,7 @@ pub enum Expr {
 
     Name(Name),
 
-    Fun(Fn),
+    Fn(Fn),
 
     Def(Def),
 
@@ -40,6 +40,8 @@ pub enum Expr {
     List(List),
 
     Dict(Dict),
+
+    Record(Record),
 
     Block(Block),
 
@@ -135,7 +137,8 @@ pub struct Binary {
 #[derive(Debug, Clone)]
 pub struct Partial {
     pub op: Operator,
-    pub expr: Option<Box<Expr>>,
+    pub lhs: Option<Box<Expr>>,
+    pub rhs: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -169,6 +172,12 @@ pub struct List {
 #[derive(Debug, Clone)]
 pub struct Dict {
     pub entries: Vec<(Expr, Expr)>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Record {
+    pub properties: Vec<(Name, Expr)>,
     pub span: Span,
 }
 
@@ -210,7 +219,7 @@ impl Expr {
     }
 
     pub const fn function(params: Vec<Name>, value: Box<Expr>, span: Span) -> Expr {
-        Expr::Fun(Fn { params, value, span })
+        Expr::Fn(Fn { params, value, span })
     }
 
     pub const fn def(name: Name, value: Box<Expr>, span: Span) -> Expr {
@@ -245,8 +254,8 @@ impl Expr {
         Expr::Binary(Binary { op, lhs, rhs, span })
     }
 
-    pub const fn partial(op: Operator, expr: Option<Box<Expr>>, span: Span) -> Expr {
-        Expr::Partial(Partial { op, expr, span })
+    pub const fn partial(op: Operator, lhs: Option<Box<Expr>>, rhs: Option<Box<Expr>>, span: Span) -> Expr {
+        Expr::Partial(Partial { op, lhs, rhs, span })
     }
 
     pub const fn tuple(items: Vec<Expr>, span: Span) -> Expr {
@@ -257,8 +266,12 @@ impl Expr {
         Expr::List(List { items, span })
     }
 
-    pub const fn dict(items: Vec<(Expr, Expr)>, span: Span) -> Expr {
-        Expr::Dict(Dict { entries: items, span })
+    pub const fn dict(entries: Vec<(Expr, Expr)>, span: Span) -> Expr {
+        Expr::Dict(Dict { entries, span })
+    }
+
+    pub const fn record(properties: Vec<(Name, Expr)>, span: Span) -> Expr {
+        Expr::Record(Record { properties, span })
     }
 
     pub const fn block(items: Vec<Expr>, span: Span) -> Expr {
@@ -298,7 +311,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Name(expr) => expr.span,
-            Expr::Fun(expr) => expr.span,
+            Expr::Fn(expr) => expr.span,
             Expr::Def(expr) => expr.span,
             Expr::Set(expr) => expr.span,
             Expr::Mut(expr) => expr.span,
@@ -313,6 +326,7 @@ impl Expr {
             Expr::Tuple(expr) => expr.span,
             Expr::List(expr) => expr.span,
             Expr::Dict(expr) => expr.span,
+            Expr::Record(expr) => expr.span,
             Expr::Block(expr) => expr.span,
             Expr::Group(expr) => expr.span,
             Expr::Number(expr) => expr.span,
@@ -323,6 +337,38 @@ impl Expr {
             Expr::False(span) => *span,
             Expr::Any(span) => *span,
             Expr::Unit(span) => *span,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Expr::Name(_) => "name",
+            Expr::Fn(_) => "fun",
+            Expr::Def(_) => "def",
+            Expr::Set(_) => "set",
+            Expr::Mut(_) => "mut",
+            Expr::Member(_) => "member",
+            Expr::Index(_) => "index",
+            Expr::Apply(_) => "apply",
+            Expr::Unary(_) => "unary",
+            Expr::Binary(_) => "binary",
+            Expr::Partial(_) => "partial",
+            Expr::If(_) => "if",
+            Expr::Match(_) => "match",
+            Expr::Tuple(_) => "tuple",
+            Expr::List(_) => "list",
+            Expr::Dict(_) => "dict",
+            Expr::Record(_) => "record",
+            Expr::Block(_) => "block",
+            Expr::Group(_) => "group",
+            Expr::Number(_) => "number",
+            Expr::String(_) => "string",
+            Expr::Template(_) => "template",
+            Expr::Variant(_) => "variant",
+            Expr::True(_) => "true",
+            Expr::False(_) => "false",
+            Expr::Any(_) => "any",
+            Expr::Unit(_) => "unit",
         }
     }
 }

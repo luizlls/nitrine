@@ -1,11 +1,11 @@
-hello = fn name {
+hello(name) =
   print "Hello, {name}!"
-}
 
-fizzbuzz = fn {
+
+fizzbuzz() =
   (range 0 100)
   |> map (
-      fn num {
+      fn num ->
         if zero (num % 15)
           then "FizzBuzz"
         else if zero (num % 3)
@@ -14,26 +14,16 @@ fizzbuzz = fn {
           then "Buzz"
         else
           string num
-      }
     )
   |> each print
-}
 
 
-factorial = fn n {
-  match n {
-    1 -> 1
-    n -> n * factorial (n - 1)
-  }
-}
-
-
-counter = fn {
+counter() = {
   counter = mut 0
   div [
-    button "+" [ click: fn (counter := counter + 1) ],
+    button "+" { click() = counter := counter + 1 },
     p ["total ", strong "{counter}"],
-    button "-" [ click: fn (counter := counter - 1) ],
+    button "-" { click() = counter := counter - 1 },
   ]
 }
 
@@ -43,4 +33,11 @@ sum  = fold (+) 0
 prod = fold (*) 1
 
 
-optional = Some value
+map(f, opt) =
+  match opt
+    case Some value -> Some (f value)
+    else None
+
+number = Some 21
+
+answer = map (2 *) number
