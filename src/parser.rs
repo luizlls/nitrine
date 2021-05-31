@@ -1,7 +1,7 @@
 use crate::{Source, Span};
-use crate::ast::*;
 use crate::token::*;
 use crate::lexer::Lexer;
+use crate::ast::*;
 use crate::error::{Result, NitrineError};
 
 struct Parser<'s> {
@@ -82,7 +82,7 @@ impl<'s> Parser<'s> {
                         _ => Expr::Name(name)
                     };
                 }
-
+                
                 self.parse_binary(Some(value), 0)
             }
             _ => {
@@ -111,7 +111,7 @@ impl<'s> Parser<'s> {
                 Ok(Expr::Name(name))
             }
             TokenKind::Literal(LiteralKind::Upper) => {
-                self.parse_variant()
+                self.parse_label()
             }
             TokenKind::Literal(LiteralKind::Number) => {
                 self.parse_number()
@@ -260,7 +260,7 @@ impl<'s> Parser<'s> {
         Ok(Expr::function(params, box value, self.spanned(start)))
     }
 
-    fn parse_variant(&mut self) -> Result<Expr> {
+    fn parse_label(&mut self) -> Result<Expr> {
 
         let start = self.span();
         self.eat(TokenKind::Literal(LiteralKind::Upper))?;
@@ -280,7 +280,7 @@ impl<'s> Parser<'s> {
             self.parse_get(Expr::Name(name))
         } else {
             let values = self.parse_args()?;
-            Ok(Expr::variant(name, values, self.spanned(start)))
+            Ok(Expr::label(name, values, self.spanned(start)))
         }
     }
 
@@ -450,7 +450,7 @@ impl<'s> Parser<'s> {
 
         let start = self.span();
 
-        let mut items = self.parse_block_of(
+        let items = self.parse_block_of(
             TokenKind::Symbol(SymbolKind::OpeningParen),
             TokenKind::Symbol(SymbolKind::ClosingParen),
             Self::parse_expr)?;
@@ -460,7 +460,7 @@ impl<'s> Parser<'s> {
         Ok(if items.is_empty() {
             Expr::Unit(span)
         } else if items.len() == 1 {
-            Expr::group(box items.pop().unwrap(), span)
+            Expr::group(box items.into_iter().next().unwrap(), span)
         } else {
             Expr::tuple(items, span)
         })
@@ -595,6 +595,7 @@ impl<'s> Parser<'s> {
           | OperatorKind::Rem => Operator::Rem,
           | OperatorKind::And => Operator::And,
           | OperatorKind::Or  => Operator::Or,
+          | OperatorKind::Is  => Operator::Is,
           | OperatorKind::Not => Operator::Not,
           | OperatorKind::Eq  => Operator::Eq,
           | OperatorKind::Ne  => Operator::Ne,
@@ -651,10 +652,10 @@ impl<'s> Parser<'s> {
         while self.maybe_eat(TokenKind::Keyword(KeywordKind::Case)) {
             let patt = self.parse_term()?;
 
-            if matches!(patt, Expr::Template(_) | Expr::Group(_)) {
+            if !patt.is_pattern() {
                 return Err(NitrineError::error(
                     patt.span(),
-                    format!("`{}` pattern not supported", patt.display_name())));
+                    format!("`{}` is not a valid pattern", patt.display_name())));
             }
 
             self.eat(TokenKind::Symbol(SymbolKind::Arrow))?;
@@ -786,7 +787,13 @@ impl<'s> Parser<'s> {
     }
 
     fn match_lines(&self) -> bool {
-        self.prev.span.line == self.token.span.line
+        match (self.prev.span, self.token.span) {
+            (Span::Full { line: prev_line, .. },
+             Span::Full { line: curr_line, .. }) => {
+                prev_line == curr_line
+            }
+            _ => false
+        }
     }
 
     fn handle_unexpected(&mut self) -> NitrineError {

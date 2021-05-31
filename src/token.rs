@@ -95,14 +95,15 @@ impl fmt::Display for KeywordKind {
 pub fn get_keyword(key: &str) -> Option<TokenKind> {
     match key {
         "fn"    => Some(TokenKind::Keyword(KeywordKind::Fn)),
+        "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
         "if"    => Some(TokenKind::Keyword(KeywordKind::If)),
         "then"  => Some(TokenKind::Keyword(KeywordKind::Then)),
         "else"  => Some(TokenKind::Keyword(KeywordKind::Else)),
-        "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
         "match" => Some(TokenKind::Keyword(KeywordKind::Match)),
         "case"  => Some(TokenKind::Keyword(KeywordKind::Case)),
         "and"   => Some(TokenKind::Operator(OperatorKind::And)),
         "or"    => Some(TokenKind::Operator(OperatorKind::Or)),
+        "is"    => Some(TokenKind::Operator(OperatorKind::Is)),
         "not"   => Some(TokenKind::Operator(OperatorKind::Not)),
         _ => None,
     }
@@ -117,6 +118,7 @@ pub enum OperatorKind {
     Rem,     // %
     And,     // and
     Or,      // or
+    Is,      // is
     Not,     // not
     Concat,  // ++
     BitAnd,  // &&&
@@ -163,6 +165,7 @@ impl OperatorKind {
             OperatorKind::BitAnd => Some(( 5, Associativity::Left)),
             OperatorKind::BitXor => Some(( 6, Associativity::Left)),
             OperatorKind::BitOr  => Some(( 5, Associativity::Left)),
+            OperatorKind::Is     => Some(( 4, Associativity::Left)),
             OperatorKind::Lt     => Some(( 4, Associativity::Left)),
             OperatorKind::Le     => Some(( 4, Associativity::Left)),
             OperatorKind::Gt     => Some(( 4, Associativity::Left)),
@@ -183,6 +186,7 @@ impl fmt::Display for OperatorKind {
         match *self {
             OperatorKind::And => write!(f, "and"),
             OperatorKind::Or => write!(f, "or"),
+            OperatorKind::Is => write!(f, "is"),
             OperatorKind::Not => write!(f, "not"),
             OperatorKind::Add => write!(f, "+"),
             OperatorKind::Sub => write!(f, "-"),

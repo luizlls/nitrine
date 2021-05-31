@@ -53,7 +53,7 @@ pub enum Expr {
 
     Template(Template),
 
-    Variant(Variant),
+    Label(Label),
 
     True(Span),
 
@@ -62,6 +62,10 @@ pub enum Expr {
     Any(Span), // `_` wildcard
 
     Unit(Span),
+
+    Info(Info),
+
+    Raise(Raise),
 }
 
 
@@ -152,7 +156,7 @@ pub struct If {
 
 #[derive(Debug, Clone)]
 pub struct Match {
-    pub value: Box<Expr>,
+    pub pred: Box<Expr>,
     pub cases: Vec<(Expr, Expr)>,
     pub span: Span,
 }
@@ -207,10 +211,36 @@ pub struct Template {
 }
 
 #[derive(Debug, Clone)]
-pub struct Variant {
+pub struct Label {
     pub name: Name,
     pub values: Vec<Expr>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Info {
+    IsLabel(String),
+
+    IsList,
+
+    IsDict,
+
+    IsRecord,
+
+    Length(usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct Raise {
+    pub value: Box<Expr>,
+    pub span: Span,
+}
+
+
+impl Name {
+    pub const fn new(value: String, span: Span) -> Name {
+        Name { value, span }
+    }
 }
 
 impl Expr {
@@ -294,16 +324,20 @@ impl Expr {
         Expr::String(Literal { value, span })
     }
 
-    pub const fn variant(name: Name, values: Vec<Expr>, span: Span) -> Expr {
-        Expr::Variant(Variant { name, values, span })
+    pub const fn label(name: Name, values: Vec<Expr>, span: Span) -> Expr {
+        Expr::Label(Label { name, values, span })
     }
 
     pub const fn conditional(test: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr>, span: Span) -> Expr {
         Expr::If(If { test, then, otherwise, span })
     }
 
-    pub const fn pattern_match(value: Box<Expr>, cases: Vec<(Expr, Expr)>, span: Span) -> Expr {
-        Expr::Match(Match { value, cases, span })
+    pub const fn pattern_match(pred: Box<Expr>, cases: Vec<(Expr, Expr)>, span: Span) -> Expr {
+        Expr::Match(Match { pred, cases, span })
+    }
+
+    pub const fn raise(value: Box<Expr>, span: Span) -> Expr {
+        Expr::Raise(Raise { value, span })
     }
 }
 
@@ -332,11 +366,13 @@ impl Expr {
             Expr::Number(expr) => expr.span,
             Expr::String(expr) => expr.span,
             Expr::Template(expr) => expr.span,
-            Expr::Variant(expr) => expr.span,
+            Expr::Label(expr) => expr.span,
+            Expr::Raise(expr) => expr.span,
             Expr::True(span) => *span,
             Expr::False(span) => *span,
             Expr::Any(span) => *span,
             Expr::Unit(span) => *span,
+            Expr::Info(_) => Span::Undefined,
         }
     }
 
@@ -364,16 +400,43 @@ impl Expr {
             Expr::Number(_) => "number",
             Expr::String(_) => "string",
             Expr::Template(_) => "template",
-            Expr::Variant(_) => "variant",
+            Expr::Label(_) => "label",
             Expr::True(_) => "true",
             Expr::False(_) => "false",
             Expr::Any(_) => "any",
             Expr::Unit(_) => "unit",
+            Expr::Raise(_) => "raise",
+            Expr::Info(_) => "info",
+        }
+    }
+
+    pub fn is_pattern(&self) -> bool {
+        matches!(self,
+            Expr::Name(_)
+          | Expr::Tuple(_)
+          | Expr::List(_)
+          | Expr::Dict(_)
+          | Expr::Record(_)
+          | Expr::Number(_)
+          | Expr::String(_)
+          | Expr::Label(_)
+          | Expr::True(_)
+          | Expr::False(_)
+          | Expr::Any(_)
+          | Expr::Unit(_)
+          | Expr::Group(_))
+    }
+
+    pub fn extract_grouped(self) -> Expr {
+        if let Expr::Group(Group { box inner, .. }) = self {
+            inner.extract_grouped()
+        } else {
+            self
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
     Add,
     Sub,
@@ -388,6 +451,7 @@ pub enum Operator {
     Ge,
     And,
     Or,
+    Is,
     Not,
     Concat,
     BitAnd,
@@ -398,6 +462,37 @@ pub enum Operator {
     BitShr,
     LPipe,
     RPipe,
+}
+
+impl std::fmt::Display for Operator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Operator::And => write!(f, "and"),
+            Operator::Or => write!(f, "or"),
+            Operator::Is => write!(f, "is"),
+            Operator::Not => write!(f, "not"),
+            Operator::Add => write!(f, "+"),
+            Operator::Sub => write!(f, "-"),
+            Operator::Mul => write!(f, "*"),
+            Operator::Div => write!(f, "/"),
+            Operator::Rem => write!(f, "%"),
+            Operator::Eq => write!(f, "=="),
+            Operator::Ne => write!(f, "!="),
+            Operator::Lt => write!(f, "<"),
+            Operator::Le => write!(f, "<="),
+            Operator::Gt => write!(f, ">"),
+            Operator::Ge => write!(f, ">="),
+            Operator::Concat => write!(f, "++"),
+            Operator::BitAnd => write!(f, "&&&"),
+            Operator::BitOr  => write!(f, "|||"),
+            Operator::BitNot => write!(f, "~~~"),
+            Operator::BitXor => write!(f, "^^^"),
+            Operator::BitShr => write!(f, ">>>"),
+            Operator::BitShl => write!(f, "<<<"),
+            Operator::LPipe => write!(f, "|>"),
+            Operator::RPipe => write!(f, "<|"),
+        }
+    }
 }
 
 

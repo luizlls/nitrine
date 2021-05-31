@@ -34,7 +34,7 @@ impl Display for NitrineError {
         write!(f, "error")?;
 
         if let Some(span) = self.span {
-            write!(f, " [{}]", span.line)?;
+            write!(f, " [{}]", span.line())?;
         }
 
         write!(f, ": {}", self.text)

@@ -3,7 +3,7 @@
 #![macro_use]
 
 //pub mod compiler;
-pub mod analysis;
+pub mod desugar;
 pub mod ast;
 pub mod token;
 pub mod lexer;
@@ -31,35 +31,62 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Hash)]
-pub struct Span {
-    line: u32,
-    start: u32,
-    end: u32,
+#[derive(Debug, Clone, Copy, Hash)]
+pub enum Span {
+    Undefined,
+
+    Line {
+        line: u32
+    },
+
+    Full {
+        line: u32,
+        start: u32,
+        end: u32,
+    },
+}
+
+impl Default for Span {
+    fn default() -> Self {
+        Span::Undefined
+    }
 }
 
 impl Span {
     pub const fn new(line: u32, start: u32, end: u32) -> Span {
-        Span {
+        Span::Full {
             line, start, end
         }
     }
 
-    pub const fn zero() -> Span {
-        Span {
-            line: 0, start: 0, end: 0
+    pub const fn range(self) -> Range<usize> {
+        match self {
+            Span::Full { start, end, .. } => {
+                (start as usize) .. (end as usize)
+            }
+            _ => 0 .. 0
         }
     }
 
-    pub const fn range(self) -> Range<usize> {
-        (self.start as usize) .. (self.end as usize)
+    pub const fn line(self) -> u32 {
+        match self {
+            Span::Full { line, .. } => line,
+            Span::Line { line, .. } => line,
+            _ => 0
+        }
     }
 }
 
 impl std::ops::Add for Span {
     type Output = Span;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        Span::new(self.line, self.start, rhs.end)
+    fn add(self, other: Self) -> Self::Output {
+        match (self, other) {
+            (Span::Full { end: offset, .. },
+             Span::Full { line, start, .. }) => {
+                Span::new(line, start, offset)
+            }
+            _ => self
+        }
     }
 }
