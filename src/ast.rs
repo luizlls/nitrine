@@ -15,19 +15,19 @@ pub enum Expr {
 
     Def(Def),
 
+    Bind(Bind),
+
     Set(Set),
 
     Mut(Mut),
 
-    Member(Member),
-
-    Index(Index),
-
-    Apply(Apply),
+    Get(Get),
 
     Unary(Unary),
 
     Binary(Binary),
+
+    Call(Call),
 
     Partial(Partial),
 
@@ -38,8 +38,6 @@ pub enum Expr {
     Tuple(Tuple),
 
     List(List),
-
-    Dict(Dict),
 
     Record(Record),
 
@@ -53,7 +51,7 @@ pub enum Expr {
 
     Template(Template),
 
-    Label(Label),
+    Variant(Variant),
 
     True(Span),
 
@@ -62,8 +60,6 @@ pub enum Expr {
     Any(Span), // `_` wildcard
 
     Unit(Span),
-
-    Info(Info),
 
     Raise(Raise),
 }
@@ -78,12 +74,19 @@ pub struct Name {
 #[derive(Debug, Clone)]
 pub struct Fn {
     pub params: Vec<Name>,
-    pub value: Box<Expr>,
+    pub body: Box<Expr>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Def {
+    pub name: Name,
+    pub value: Box<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Bind {
     pub name: Name,
     pub value: Box<Expr>,
     pub span: Span,
@@ -103,9 +106,9 @@ pub struct Mut {
 }
 
 #[derive(Debug, Clone)]
-pub struct Member {
+pub struct Get {
     pub source: Box<Expr>,
-    pub member: Name,
+    pub name: Name,
     pub span: Span,
 }
 
@@ -117,9 +120,9 @@ pub struct Index {
 }
 
 #[derive(Debug, Clone)]
-pub struct Apply {
+pub struct Call {
     pub fun: Box<Expr>,
-    pub arg: Box<Expr>,
+    pub args: Vec<Expr>,
     pub span: Span,
 }
 
@@ -148,15 +151,15 @@ pub struct Partial {
 
 #[derive(Debug, Clone)]
 pub struct If {
-    pub test: Box<Expr>,
-    pub then: Box<Expr>,
-    pub otherwise: Box<Expr>,
+    pub predicate: Box<Expr>,
+    pub positive: Box<Expr>,
+    pub negative: Box<Expr>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Match {
-    pub pred: Box<Expr>,
+    pub predicate: Box<Expr>,
     pub cases: Vec<(Expr, Expr)>,
     pub span: Span,
 }
@@ -164,20 +167,17 @@ pub struct Match {
 #[derive(Debug, Clone)]
 pub struct Tuple {
     pub items: Vec<Expr>,
+    pub tail: Option<Box<Expr>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct List {
     pub items: Vec<Expr>,
+    pub tail: Option<Box<Expr>>,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
-pub struct Dict {
-    pub entries: Vec<(Expr, Expr)>,
-    pub span: Span,
-}
 
 #[derive(Debug, Clone)]
 pub struct Record {
@@ -211,23 +211,10 @@ pub struct Template {
 }
 
 #[derive(Debug, Clone)]
-pub struct Label {
+pub struct Variant {
     pub name: Name,
     pub values: Vec<Expr>,
     pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum Info {
-    IsLabel(String),
-
-    IsList,
-
-    IsDict,
-
-    IsRecord,
-
-    Length(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -244,114 +231,16 @@ impl Name {
 }
 
 impl Expr {
-    pub const fn name(value: String, span: Span) -> Expr {
-        Expr::Name(Name { value, span })
-    }
-
-    pub const fn function(params: Vec<Name>, value: Box<Expr>, span: Span) -> Expr {
-        Expr::Fn(Fn { params, value, span })
-    }
-
-    pub const fn def(name: Name, value: Box<Expr>, span: Span) -> Expr {
-        Expr::Def(Def { name, value, span })
-    }
-
-    pub const fn set(target: Box<Expr>, value: Box<Expr>, span: Span) -> Expr {
-        Expr::Set(Set { target, value, span })
-    }
-
-    pub const fn mutable(value: Box<Expr>, span: Span) -> Expr {
-        Expr::Mut(Mut { value, span })
-    }
-
-    pub const fn member(source: Box<Expr>, member: Name, span: Span) -> Expr {
-        Expr::Member(Member { source, member, span })
-    }
-
-    pub const fn index(source: Box<Expr>, index: Box<Expr>, span: Span) -> Expr {
-        Expr::Index(Index { source, index, span })
-    }
-
-    pub const fn apply(fun: Box<Expr>, arg: Box<Expr>, span: Span) -> Expr {
-        Expr::Apply(Apply { fun, arg, span })
-    }
-
-    pub const fn unary(op: Operator, rhs: Box<Expr>, span: Span) -> Expr {
-        Expr::Unary(Unary { op, rhs, span })
-    }
-
-    pub const fn binary(op: Operator, lhs: Box<Expr>, rhs: Box<Expr>, span: Span) -> Expr {
-        Expr::Binary(Binary { op, lhs, rhs, span })
-    }
-
-    pub const fn partial(op: Operator, lhs: Option<Box<Expr>>, rhs: Option<Box<Expr>>, span: Span) -> Expr {
-        Expr::Partial(Partial { op, lhs, rhs, span })
-    }
-
-    pub const fn tuple(items: Vec<Expr>, span: Span) -> Expr {
-        Expr::Tuple(Tuple { items, span })
-    }
-
-    pub const fn list(items: Vec<Expr>, span: Span) -> Expr {
-        Expr::List(List { items, span })
-    }
-
-    pub const fn dict(entries: Vec<(Expr, Expr)>, span: Span) -> Expr {
-        Expr::Dict(Dict { entries, span })
-    }
-
-    pub const fn record(properties: Vec<(Name, Expr)>, span: Span) -> Expr {
-        Expr::Record(Record { properties, span })
-    }
-
-    pub const fn block(items: Vec<Expr>, span: Span) -> Expr {
-        Expr::Block(Block { items, span })
-    }
-
-    pub const fn group(inner: Box<Expr>, span: Span) -> Expr {
-        Expr::Group(Group { inner, span })
-    }
-
-    pub const fn template(elements: Vec<Expr>, span: Span) -> Expr {
-        Expr::Template(Template { elements, span })
-    }
-
-    pub const fn number(value: String, span: Span) -> Expr {
-        Expr::Number(Literal { value, span })
-    }
-
-    pub const fn string(value: String, span: Span) -> Expr {
-        Expr::String(Literal { value, span })
-    }
-
-    pub const fn label(name: Name, values: Vec<Expr>, span: Span) -> Expr {
-        Expr::Label(Label { name, values, span })
-    }
-
-    pub const fn conditional(test: Box<Expr>, then: Box<Expr>, otherwise: Box<Expr>, span: Span) -> Expr {
-        Expr::If(If { test, then, otherwise, span })
-    }
-
-    pub const fn pattern_match(pred: Box<Expr>, cases: Vec<(Expr, Expr)>, span: Span) -> Expr {
-        Expr::Match(Match { pred, cases, span })
-    }
-
-    pub const fn raise(value: Box<Expr>, span: Span) -> Expr {
-        Expr::Raise(Raise { value, span })
-    }
-}
-
-impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Name(expr) => expr.span,
             Expr::Fn(expr) => expr.span,
             Expr::Def(expr) => expr.span,
+            Expr::Bind(expr) => expr.span,
             Expr::Set(expr) => expr.span,
             Expr::Mut(expr) => expr.span,
-            Expr::Member(expr) => expr.span,
-            Expr::Index(expr) => expr.span,
-            Expr::Apply(expr) => expr.span,
+            Expr::Get(expr) => expr.span,
+            Expr::Call(expr) => expr.span,
             Expr::Unary(expr) => expr.span,
             Expr::Binary(expr) => expr.span,
             Expr::Partial(expr) => expr.span,
@@ -359,20 +248,18 @@ impl Expr {
             Expr::Match(expr) => expr.span,
             Expr::Tuple(expr) => expr.span,
             Expr::List(expr) => expr.span,
-            Expr::Dict(expr) => expr.span,
             Expr::Record(expr) => expr.span,
             Expr::Block(expr) => expr.span,
             Expr::Group(expr) => expr.span,
             Expr::Number(expr) => expr.span,
             Expr::String(expr) => expr.span,
             Expr::Template(expr) => expr.span,
-            Expr::Label(expr) => expr.span,
+            Expr::Variant(expr) => expr.span,
             Expr::Raise(expr) => expr.span,
             Expr::True(span) => *span,
             Expr::False(span) => *span,
             Expr::Any(span) => *span,
             Expr::Unit(span) => *span,
-            Expr::Info(_) => Span::Undefined,
         }
     }
 
@@ -381,11 +268,11 @@ impl Expr {
             Expr::Name(_) => "name",
             Expr::Fn(_) => "fun",
             Expr::Def(_) => "def",
+            Expr::Bind(_) => "bind",
             Expr::Set(_) => "set",
             Expr::Mut(_) => "mut",
-            Expr::Member(_) => "member",
-            Expr::Index(_) => "index",
-            Expr::Apply(_) => "apply",
+            Expr::Get(_) => "get",
+            Expr::Call(_) => "apply",
             Expr::Unary(_) => "unary",
             Expr::Binary(_) => "binary",
             Expr::Partial(_) => "partial",
@@ -393,20 +280,18 @@ impl Expr {
             Expr::Match(_) => "match",
             Expr::Tuple(_) => "tuple",
             Expr::List(_) => "list",
-            Expr::Dict(_) => "dict",
             Expr::Record(_) => "record",
             Expr::Block(_) => "block",
             Expr::Group(_) => "group",
             Expr::Number(_) => "number",
             Expr::String(_) => "string",
             Expr::Template(_) => "template",
-            Expr::Label(_) => "label",
+            Expr::Variant(_) => "variant",
             Expr::True(_) => "true",
             Expr::False(_) => "false",
             Expr::Any(_) => "any",
             Expr::Unit(_) => "unit",
             Expr::Raise(_) => "raise",
-            Expr::Info(_) => "info",
         }
     }
 
@@ -415,16 +300,15 @@ impl Expr {
             Expr::Name(_)
           | Expr::Tuple(_)
           | Expr::List(_)
-          | Expr::Dict(_)
           | Expr::Record(_)
           | Expr::Number(_)
           | Expr::String(_)
-          | Expr::Label(_)
+          | Expr::Variant(_)
+          | Expr::Group(_)
           | Expr::True(_)
           | Expr::False(_)
           | Expr::Any(_)
-          | Expr::Unit(_)
-          | Expr::Group(_))
+          | Expr::Unit(_))
     }
 
     pub fn extract_grouped(self) -> Expr {

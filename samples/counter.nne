@@ -1,0 +1,7 @@
+counter = mut 0
+
+div [
+  button "+" { click = () -> counter := counter + 1 },
+  span "total {counter}",
+  button "-" { click = () -> counter := counter - 1 },
+]

@@ -1,0 +1,34 @@
+mandelbrot = () -> do {
+  xsize = 59
+  ysize = 21
+  minI  = -1.0
+  maxI  =  1.0
+  minR  = -2.0
+  maxR  =  1.0
+  stepX = (maxR - minR) / xsize
+  stepY = (maxI - minI) / ysize
+
+  grid = map (y -> do {
+    im = minI + stepY * y
+    map (x -> do {
+        re = minR + stepX * x
+        char (62 - (loop 0 re im re im (re * re + im * im)))
+    }) (range 0 xsize)
+  }) (range 0 ysize)
+
+  print grid
+}
+
+loop = (n, r, i, zr, zi, v) ->
+  if n >= 30
+  then
+    n
+  else if v > 4.0
+  then
+    n - 1
+  else do {
+    a = zr * zr
+    b = zi * zi
+    loop (n + 1) r i (a - b + r) (2 * zr * zi + i) (a + b)
+  }
+  

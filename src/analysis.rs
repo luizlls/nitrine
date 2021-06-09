@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-
 struct Context<'ctx> {
     parent: Option<&'ctx Self>,
     items: HashMap<String, ()>

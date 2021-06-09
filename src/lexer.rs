@@ -97,6 +97,12 @@ impl<'src> Lexer<'src> {
             Some(')') => {
                 self.single(TokenKind::Symbol(SymbolKind::ClosingParen))
             }
+            Some('[') => {
+                self.single(TokenKind::Symbol(SymbolKind::OpeningBracket))
+            }
+            Some(']') => {
+                self.single(TokenKind::Symbol(SymbolKind::ClosingBracket))
+            }
             Some('{') => {
                 self.single(TokenKind::Symbol(SymbolKind::OpeningBrace))
             }
@@ -107,12 +113,6 @@ impl<'src> Lexer<'src> {
             Some('}') => {
                 self.single(TokenKind::Symbol(SymbolKind::ClosingBrace))
             }
-            Some('[') => {
-                self.single(TokenKind::Symbol(SymbolKind::OpeningBracket))
-            }
-            Some(']') => {
-                self.single(TokenKind::Symbol(SymbolKind::ClosingBracket))
-            }
             Some(',') => {
                 self.single(TokenKind::Symbol(SymbolKind::Comma))
             }
@@ -121,6 +121,9 @@ impl<'src> Lexer<'src> {
             }
             Some('_') => {
                 self.single(TokenKind::Symbol(SymbolKind::Any))
+            }
+            Some('&') => {
+                self.single(TokenKind::Symbol(SymbolKind::Amp))
             }
             Some('/') if self.peek == Some('/') => {
                 self.comment()

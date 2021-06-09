@@ -37,9 +37,11 @@ pub enum SymbolKind {
     Comma,
     Colon,
     Semi,   // ;
-    Arrow,  // ->
+    FArrow, // ->
+    BArrow, // <-
     Equals, // =
     Warlus, // :=
+    Amp, // &
     Any, // _
 }
 
@@ -57,9 +59,11 @@ impl fmt::Display for SymbolKind {
             SymbolKind::Comma => write!(f, ","),
             SymbolKind::Colon => write!(f, ":"),
             SymbolKind::Semi => write!(f, ";"),
-            SymbolKind::Arrow => write!(f, "->"),
+            SymbolKind::FArrow => write!(f, "->"),
+            SymbolKind::BArrow => write!(f, "<-"),
             SymbolKind::Equals => write!(f, "="),
             SymbolKind::Warlus => write!(f, ":="),
+            SymbolKind::Amp => write!(f, "&"),
             SymbolKind::Any => write!(f, "_"),
         }
     }
@@ -68,8 +72,9 @@ impl fmt::Display for SymbolKind {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KeywordKind {
-    Fn,
     Mut,
+    Do,
+    Fn,
     If,
     Then,
     Else,
@@ -81,11 +86,12 @@ pub enum KeywordKind {
 impl fmt::Display for KeywordKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            KeywordKind::Mut => write!(f, "mut"),
+            KeywordKind::Do => write!(f, "do"),
             KeywordKind::Fn => write!(f, "fn"),
             KeywordKind::If => write!(f, "if"),
             KeywordKind::Then => write!(f, "then"),
             KeywordKind::Else => write!(f, "else"),
-            KeywordKind::Mut => write!(f, "mut"),
             KeywordKind::Match => write!(f, "match"),
             KeywordKind::Case => write!(f, "case"),
         }
@@ -94,8 +100,9 @@ impl fmt::Display for KeywordKind {
 
 pub fn get_keyword(key: &str) -> Option<TokenKind> {
     match key {
-        "fn"    => Some(TokenKind::Keyword(KeywordKind::Fn)),
         "mut"   => Some(TokenKind::Keyword(KeywordKind::Mut)),
+        "do"    => Some(TokenKind::Keyword(KeywordKind::Do)),
+        "fn"    => Some(TokenKind::Keyword(KeywordKind::Fn)),
         "if"    => Some(TokenKind::Keyword(KeywordKind::If)),
         "then"  => Some(TokenKind::Keyword(KeywordKind::Then)),
         "else"  => Some(TokenKind::Keyword(KeywordKind::Else)),
@@ -218,7 +225,8 @@ pub fn get_operator(key: &str) -> Option<TokenKind> {
         "."   => Some(TokenKind::Symbol(SymbolKind::Dot)),
         "="   => Some(TokenKind::Symbol(SymbolKind::Equals)),
         ":="  => Some(TokenKind::Symbol(SymbolKind::Warlus)),
-        "->"  => Some(TokenKind::Symbol(SymbolKind::Arrow)),
+        "->"  => Some(TokenKind::Symbol(SymbolKind::FArrow)),
+        "<-"  => Some(TokenKind::Symbol(SymbolKind::BArrow)),
         "+"   => Some(TokenKind::Operator(OperatorKind::Add)),
         "-"   => Some(TokenKind::Operator(OperatorKind::Sub)),
         "*"   => Some(TokenKind::Operator(OperatorKind::Mul)),
