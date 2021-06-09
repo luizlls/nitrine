@@ -176,13 +176,12 @@ impl<'s> Parser<'s> {
     fn parse_set(&mut self, expr: Expr) -> Result<Expr> {
         let start = expr.span();
 
-        let target = box expr;
         self.eat(TokenKind::Symbol(SymbolKind::Warlus))?;
         let value = box self.parse_expr()?;
 
         Ok(Expr::Set(
             Set {
-                target,
+                target: box expr,
                 value,
                 span: self.spanned(start),
             }))
@@ -408,37 +407,15 @@ impl<'s> Parser<'s> {
     fn parse_list(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let mut items = vec![];
-        let mut tail  = None;
-
-        self.eat(TokenKind::Symbol(SymbolKind::OpeningBracket))?;
-
-        while !self.done() {
-            if self.token_is(TokenKind::Symbol(SymbolKind::ClosingBracket)) {
-                break;
-            }
-
-            items.push(self.parse_expr()?);
-
-            match self.token.kind {
-                TokenKind::Symbol(SymbolKind::Amp) => {
-                    self.bump();
-                    tail = Some(box self.parse_expr()?);
-                    break;
-                }
-                TokenKind::Symbol(SymbolKind::Comma) => {
-                    self.bump();
-                }
-                _ => { break; }
-            }
-        }
-
-        self.eat(TokenKind::Symbol(SymbolKind::ClosingBracket))?;
+        let (items, rest) = self.parse_items_and_rest(
+            TokenKind::Symbol(SymbolKind::OpeningBracket),
+            TokenKind::Symbol(SymbolKind::ClosingBracket),
+            Self::parse_expr)?;
 
         Ok(Expr::List(
             List {
                 items,
-                tail,
+                rest,
                 span: self.spanned(start),
             }))
     }
@@ -446,43 +423,21 @@ impl<'s> Parser<'s> {
     fn parse_paren(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let mut items = vec![];
-        let mut tail  = None;
+        let (items, rest) = self.parse_items_and_rest(
+            TokenKind::Symbol(SymbolKind::OpeningParen),
+            TokenKind::Symbol(SymbolKind::ClosingParen),
+            Self::parse_expr)?;
 
-        self.eat(TokenKind::Symbol(SymbolKind::OpeningParen))?;
-
-        while !self.done() {
-            if self.token_is(TokenKind::Symbol(SymbolKind::ClosingParen)) {
-                break;
-            }
-
-            items.push(self.parse_expr()?);
-
-            match self.token.kind {
-                TokenKind::Symbol(SymbolKind::Amp) => {
-                    self.bump();
-                    tail = Some(box self.parse_expr()?);
-                    break;
-                }
-                TokenKind::Symbol(SymbolKind::Comma) => {
-                    self.bump();
-                }
-                _ => { break; }
-            }
+        // if is defining a function
+        if self.token_is(TokenKind::Symbol(SymbolKind::FArrow)) {
+            return self.expr_to_param(items).and_then(|params| self.parse_fn(params));
         }
-
-        self.eat(TokenKind::Symbol(SymbolKind::ClosingParen))?;
 
         let span = self.spanned(start);
 
-        if self.token_is(TokenKind::Symbol(SymbolKind::FArrow)) {
-            return self.to_params(items)
-                       .and_then(|params| self.parse_fn(params));
-        }
-
-        let e = if items.is_empty() && tail.is_none() {
+        let e = if items.is_empty() && rest.is_none() {
             Expr::Unit(span)
-        } else if items.len() == 1 && tail.is_none() {
+        } else if items.len() == 1 && rest.is_none() {
             let inner = box items.into_iter().next().unwrap();
             Expr::Group(
                 Group {
@@ -493,7 +448,7 @@ impl<'s> Parser<'s> {
             Expr::Tuple(
                 Tuple {
                     items,
-                    tail,
+                    rest,
                     span: self.spanned(start),
                 })
         };
@@ -501,7 +456,7 @@ impl<'s> Parser<'s> {
         Ok(e)
     }
 
-    fn to_params(&self, items: Vec<Expr>) -> Result<Vec<Name>> {
+    fn expr_to_param(&self, items: Vec<Expr>) -> Result<Vec<Name>> {
         return items
             .into_iter()
             .map(|item| {
@@ -519,14 +474,15 @@ impl<'s> Parser<'s> {
     fn parse_record(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let properties = self.parse_block_of(
+        let (items, rest) = self.parse_items_and_rest(
             TokenKind::Symbol(SymbolKind::OpeningBrace),
             TokenKind::Symbol(SymbolKind::ClosingBrace),
             Self::parse_property)?;
         
         Ok(Expr::Record(
             Record {
-                properties,
+                items,
+                rest,
                 span: self.spanned(start),
             }))
     }
@@ -555,6 +511,41 @@ impl<'s> Parser<'s> {
         };
 
         Ok((key, val))
+    }
+
+    fn parse_items_and_rest<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F) 
+    -> Result<(Vec<T>, Option<Box<Expr>>)>
+    where
+        F: FnMut(&mut Self) -> Result<T>,
+    {
+        let mut items = vec![];
+        let mut rest  = None;
+
+        self.eat(open)?;
+
+        loop {
+            if self.token_is(close) {
+                break;
+            }
+
+            items.push(f(self)?);
+
+            match self.token.kind {
+                TokenKind::Symbol(SymbolKind::Amp) => {
+                    self.bump();
+                    rest = Some(box self.parse_expr()?);
+                    break;
+                }
+                TokenKind::Symbol(SymbolKind::Comma) => {
+                    self.bump();
+                }
+                _ => { break; }
+            }
+        }
+
+        self.eat(close)?;
+
+        Ok((items, rest))
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
@@ -773,32 +764,6 @@ impl<'s> Parser<'s> {
         while predicate(&self) {
             result.push(collect(self)?);
         }
-
-        Ok(result)
-    }
-
-    fn parse_block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
-        -> Result<Vec<T>>
-    where
-        F: FnMut(&mut Self) -> Result<T>,
-    {
-        let mut result = vec![];
-
-        self.eat(open)?;
-
-        loop {
-            if self.token_is(close) {
-                break;
-            }
-
-            result.push(f(self)?);
-
-            if !self.maybe_eat(TokenKind::Symbol(SymbolKind::Comma)) {
-                break;
-            }
-        }
-
-        self.eat(close)?;
 
         Ok(result)
     }

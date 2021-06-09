@@ -167,21 +167,21 @@ pub struct Match {
 #[derive(Debug, Clone)]
 pub struct Tuple {
     pub items: Vec<Expr>,
-    pub tail: Option<Box<Expr>>,
+    pub rest: Option<Box<Expr>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct List {
     pub items: Vec<Expr>,
-    pub tail: Option<Box<Expr>>,
+    pub rest: Option<Box<Expr>>,
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct Record {
-    pub properties: Vec<(Name, Expr)>,
+    pub items: Vec<(Name, Expr)>,
+    pub rest: Option<Box<Expr>>,
     pub span: Span,
 }
 

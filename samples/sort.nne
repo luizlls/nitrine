@@ -1,9 +1,9 @@
 sort = list ->
   match list
     case [pivot & tail] -> do {
-        less = filter (<  pivot) tail
-        more = filter (>= pivot) tail
+      less = filter (<  pivot) tail
+      more = filter (>= pivot) tail
 
-        sort(less) ++ [pivot] ++ sort(more)
+      sort(less) ++ [pivot] ++ sort(more)
     }
     else []
