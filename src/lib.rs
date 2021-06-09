@@ -1,12 +1,10 @@
 #![feature(box_syntax)]
 #![feature(box_patterns)]
-#![feature(try_trait)]
 #![macro_use]
 
-pub mod compiler;
+//pub mod compiler;
 pub mod analysis;
 pub mod ast;
-pub mod hir;
 pub mod token;
 pub mod lexer;
 pub mod parser;
@@ -33,11 +31,17 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Hash)]
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct Span {
     line: u32,
     start: u32,
     end: u32,
+}
+
+impl Default for Span {
+    fn default() -> Self {
+        Span::new(0, 0, 0)
+    }
 }
 
 impl Span {
@@ -47,11 +51,21 @@ impl Span {
         }
     }
 
-    pub const fn to(self, other: Self) -> Span {
-        Span::new(self.line, self.start, other.end)
+    pub const fn basic(line: u32) -> Span {
+        Span {
+            line, start: 0, end: 0
+        }
     }
 
     pub const fn range(self) -> Range<usize> {
         (self.start as usize) .. (self.end as usize)
+    }
+}
+
+impl std::ops::Add for Span {
+    type Output = Span;
+
+    fn add(self, other: Self) -> Self::Output {
+        Span::new(self.line, self.start, other.end)
     }
 }

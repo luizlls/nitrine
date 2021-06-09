@@ -1,7 +1,7 @@
 use crate::{Source, Span};
-use crate::ast::*;
-use crate::token::{Token, TokenKind, TokenKindError, Associativity};
+use crate::token::*;
 use crate::lexer::Lexer;
+use crate::ast::*;
 use crate::error::{Result, NitrineError};
 
 struct Parser<'s> {
@@ -28,237 +28,322 @@ impl<'s> Parser<'s> {
         parser
     }
 
-    fn definition(&mut self) -> Result<Definition> {
-        let start = self.span();
+    fn parse_module(mut self) -> Result<Module> {
+        let mut nodes = vec![];
 
-        let name = self.name()?;
+        while !self.done() {
+            nodes.push(self.parse_expr()?);
+        }
 
-        let value = box if self.matches(TokenKind::OpeningParen) {
-            self.function()?
-        } else {
-            self.eat(TokenKind::Equals)?;
-            self.expr()?
-        };
-
-        Ok(Definition { name, value, span: self.complete(start) })
+        Ok(Module { nodes })
     }
 
-    fn name(&mut self) -> Result<Name> {
-        let span = self.token.span;
-        self.eat(TokenKind::Lower)?;
-        let name = self.source.content[span.range()].into();
-
-        Ok(Name { value: name, span })
-    }
-
-    fn expr(&mut self) -> Result<Expr> {
+    fn parse_expr(&mut self) -> Result<Expr> {
         match self.token.kind {
-            TokenKind::If => {
-                self.cond()
+            TokenKind::Keyword(KeywordKind::Mut) => {
+                self.parse_mut()
             }
-            TokenKind::Do => {
-                self.block()
+            TokenKind::Keyword(KeywordKind::Do) => {
+                self.parse_do()
             }
-            TokenKind::Fn => {
-                self.lambda()
+            TokenKind::Keyword(KeywordKind::If) => {
+                self.parse_if()
+            }
+            TokenKind::Keyword(KeywordKind::Match) => {
+                self.parse_match()
+            }
+            TokenKind::Operator(_) => {
+                self.parse_unary()
+            }
+            _ if self.start_term() => {
+                let mut value = self.parse_term()?;
+
+                if self.start_term() && self.match_lines() {
+                    value = self.parse_apply(value)?
+                } else if let Expr::Name(name) = value {
+                    value = match self.token.kind {
+                        TokenKind::Symbol(SymbolKind::Equals) => {
+                            self.parse_def(name)?
+                        }
+                        TokenKind::Symbol(SymbolKind::BArrow) => {
+                            self.parse_bind(name)?
+                        }
+                        TokenKind::Symbol(SymbolKind::FArrow) => {
+                            self.parse_fn(vec![name])?
+                        }
+                        TokenKind::Symbol(SymbolKind::Warlus) => {
+                            self.parse_set(Expr::Name(name))?
+                        }
+                        _ => Expr::Name(name)
+                    }
+                }
+
+                self.parse_binary(Some(value), 0)
             }
             _ => {
-                self.binary(0)
+                Err(self.handle_unexpected())
             }
         }
     }
 
-    fn term(&mut self, apply: bool) -> Result<Expr> {
-        let mut term = match self.token.kind {
-            TokenKind::Lower => {
-                Expr::Name(self.name()?)
+    fn start_term(&self) -> bool {
+        matches!(self.token.kind,
+            TokenKind::Literal(LiteralKind::Lower)
+          | TokenKind::Literal(LiteralKind::Upper)
+          | TokenKind::Literal(LiteralKind::String)
+          | TokenKind::Literal(LiteralKind::Number)
+          | TokenKind::Template(TemplateKind::StringStart)
+          | TokenKind::Symbol(SymbolKind::OpeningParen)
+          | TokenKind::Symbol(SymbolKind::OpeningBracket)
+          | TokenKind::Symbol(SymbolKind::OpeningBrace)
+          | TokenKind::Symbol(SymbolKind::Any))
+    }
+
+    fn parse_term(&mut self) -> Result<Expr> {
+        match self.token.kind {
+            TokenKind::Literal(LiteralKind::Lower) => {
+                let name = self.parse_name()?;
+                Ok(Expr::Name(name))
             }
-            TokenKind::Upper => {
-                self.symbol()?
+            TokenKind::Literal(LiteralKind::Upper) => {
+                self.parse_variant()
             }
-            TokenKind::Number => {
-                self.number()?
+            TokenKind::Literal(LiteralKind::Number) => {
+                self.parse_number()
             }
-            TokenKind::String => {
-                self.string(TokenKind::String)?
+            TokenKind::Literal(LiteralKind::String) => {
+                self.parse_string(TokenKind::Literal(LiteralKind::String))
             }
-            TokenKind::StringStart => {
-                self.template()?
+            TokenKind::Template(TemplateKind::StringStart) => {
+                self.parse_template()
             }
-            TokenKind::OpeningParen => {
-                self.parens()?
+            TokenKind::Symbol(SymbolKind::OpeningParen) => {
+                self.parse_paren()
             }
-            TokenKind::OpeningBrace => {
-                self.record()?
+            TokenKind::Symbol(SymbolKind::OpeningBracket) => {
+                self.parse_list()
             }
-            TokenKind::OpeningBracket => {
-                self.list()?
+            TokenKind::Symbol(SymbolKind::OpeningBrace) => {
+                self.parse_record()
             }
-            tk if tk.is_operator() => {
-                self.unary()?
+            TokenKind::Symbol(SymbolKind::Any) => {
+                let span = self.bump();
+                Ok(Expr::Any(span))
             }
             _ => {
-                return Err(self.handle_unexpected())
-            }
-        };
-
-        while self.match_lines() {
-            term = match self.token.kind {
-                TokenKind::Equals => {
-                    self.def(term)?
-                }
-                TokenKind::Warlus => {
-                    self.set(term)?
-                }
-                TokenKind::Dot => {
-                    self.dot(term)?
-                }
-                _ => { break; }
+                Err(self.handle_unexpected())
             }
         }
-
-        if apply {
-            self.apply(term)
-        } else {
-            Ok(term)
-        }
     }
 
-    fn def(&mut self, expr: Expr) -> Result<Expr> {
-        let span = expr.span();
+    fn parse_name(&mut self) -> Result<Name> {
+        let span = self.span();
 
-        self.eat(TokenKind::Equals)?;
-        let mutable = self.maybe_eat(TokenKind::Mut);
-        let value   = box self.expr()?;
+        self.eat(TokenKind::Literal(LiteralKind::Lower))?;
+        let value = self.source.content[span.range()].into();
 
-        Ok(Expr::Def(Def { patt: box expr, mutable, value, span }))
+        Ok(Name { value, span })
     }
 
+    fn parse_def(&mut self, name: Name) -> Result<Expr> {
+        let start = name.span;
 
-    fn set(&mut self, expr: Expr) -> Result<Expr> {
-        let span = expr.span();
+        self.eat(TokenKind::Symbol(SymbolKind::Equals))?;
+        let value = box self.parse_expr()?;
 
-        self.eat(TokenKind::Warlus)?;
-        let value = box self.expr()?;
-
-        Ok(Expr::Set(Set { patt: box expr, value, span }))
+        Ok(Expr::Def(
+            Def {
+                name,
+                value,
+                span: self.spanned(start),
+            }))
     }
 
-    fn dot(&mut self, mut expr: Expr) -> Result<Expr> {
+    fn parse_bind(&mut self, name: Name) -> Result<Expr> {
+        let start = name.span;
+
+        self.eat(TokenKind::Symbol(SymbolKind::BArrow))?;
+        let value = box self.parse_expr()?;
+
+        Ok(Expr::Bind(
+            Bind {
+                name,
+                value,
+                span: self.spanned(start),
+            }))
+    }
+
+    fn parse_set(&mut self, expr: Expr) -> Result<Expr> {
+        let start = expr.span();
+
+        self.eat(TokenKind::Symbol(SymbolKind::Warlus))?;
+        let value = box self.parse_expr()?;
+
+        Ok(Expr::Set(
+            Set {
+                target: box expr,
+                value,
+                span: self.spanned(start),
+            }))
+    }
+
+    fn parse_get(&mut self, mut expr: Expr) -> Result<Expr> {
         let span = expr.span();
 
-        while self.maybe_eat(TokenKind::Dot) {
-            let name = self.name()?;
-                expr = Expr::Get(Get { expr: box expr, name, span: self.complete(span) });
+        while self.maybe_eat(TokenKind::Symbol(SymbolKind::Dot)) {
+            let name = self.parse_name()?;
+            
+            expr = Expr::Get(
+                Get {
+                    source: box expr,
+                    name,
+                    span: self.spanned(span),
+                });
         }
 
         Ok(expr)
     }
 
-    fn block(&mut self) -> Result<Expr> {
+    fn parse_mut(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        self.eat(TokenKind::Do)?;
+        self.eat(TokenKind::Keyword(KeywordKind::Mut))?;
+        let value = box self.parse_expr()?;
+
+        Ok(Expr::Mut(
+            Mut {
+                value,
+                span: self.spanned(start),
+            }))
+    }
+
+    fn parse_do(&mut self) -> Result<Expr> {
+        self.eat(TokenKind::Keyword(KeywordKind::Do))
+            .and_then(|_| {
+                self.parse_block()
+            })
+    }
+
+    fn parse_block(&mut self) -> Result<Expr> {
+        let start = self.span();
 
         let mut items = vec![];
+        
+        self.eat(TokenKind::Symbol(SymbolKind::OpeningBrace))?;
 
-        loop {
-            items.push(self.expr()?);
-
-            if !self.maybe_eat(TokenKind::Semi) {
-                break;
-            }
+        while !self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace)) {
+            items.push(self.parse_expr()?);
         }
 
-        Ok(Expr::Block(Block { items, span: self.complete(start) }))
+        self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
+
+        Ok(Expr::Block(
+            Block {
+                items,
+                span: self.spanned(start),
+            }))
     }
 
-    fn function(&mut self) -> Result<Expr> {
+    fn parse_fn(&mut self, params: Vec<Name>) -> Result<Expr> {
+        
+        let start = if let Some(name) = params.get(0) {
+            name.span
+        } else {
+            self.span()
+        };
+
+        self.eat(TokenKind::Symbol(SymbolKind::FArrow))?;
+
+        let body = box self.parse_expr()?;
+
+        Ok(Expr::Fn(
+            Fn {
+                params,
+                body,
+                span: self.spanned(start),
+            }))
+    }
+
+    fn parse_variant(&mut self) -> Result<Expr> {
+
         let start = self.span();
+        self.eat(TokenKind::Literal(LiteralKind::Upper))?;
 
-        let mut args = self.block_of(
-            TokenKind::OpeningParen,
-            TokenKind::ClosingParen,
-            Self::expr)?;
+        let span  = self.prev.span;
+        let value = self.source.content[span.range()].to_string();
 
-        if args.is_empty() {
-            args.push(Expr::Unit(self.complete(start)));
+        match &value[..] {
+            "True"  => return Ok(Expr::True(span)),
+            "False" => return Ok(Expr::False(span)),
+            _ => {}
         }
 
-        self.eat(TokenKind::Equals)?;
+        let name  = Name { value, span };
 
-        let value = box self.expr()?;
-
-        Ok(Expr::Fun(Fun { args, value, span: self.complete(start) }))
-    }
-
-    fn symbol(&mut self) -> Result<Expr> {
-        let Token { span, .. } = self.eat(TokenKind::Upper)?;
-
-        let name = self.source.content[span.range()].into();
-        let name = Name { value: name, span };
-
-        if self.match_lines() && self.matches(TokenKind::Dot) {
-            self.dot(Expr::Name(name))
+        if self.token_is(TokenKind::Symbol(SymbolKind::Dot)) && self.match_lines() {
+            self.parse_get(Expr::Name(name))
         } else {
-            let values = self.args()?;
-            Ok(Expr::Variant(Variant { name, values, span: self.complete(span) }))
+            let values = self.parse_args()?;
+
+            Ok(Expr::Variant(
+                Variant {
+                    name,
+                    values,
+                    span: self.spanned(start),
+                }))
         }
     }
 
-    fn args(&mut self) -> Result<Vec<Expr>> {
-        let mut args = vec![];
+    fn parse_args(&mut self) -> Result<Vec<Expr>> {
+        self.parse_while(Self::parse_term, |this| this.start_term() && this.match_lines())
+    }
 
-        while self.match_lines() {
-            match self.token.kind {
-                TokenKind::Lower
-              | TokenKind::Upper
-              | TokenKind::Number
-              | TokenKind::StringStart
-              | TokenKind::String
-              | TokenKind::OpeningParen
-              | TokenKind::OpeningBrace
-              | TokenKind::OpeningBracket => {
-                    args.push(self.term(false)?)
-                }
-                _ => { break; }
+    fn parse_apply(&mut self, callee: Expr) -> Result<Expr> {
+        let start = callee.span();
+
+        match callee {
+            Expr::Name(_)
+          | Expr::Call(_)
+          | Expr::Group(_)
+          | Expr::Get(_) => {},
+            _ => {
+                return Ok(callee)
             }
+        };
+
+        if !self.match_lines() {
+            return Ok(callee)
         }
 
-        Ok(args)
+        let args = self.parse_args()?;
+
+        Ok(Expr::Call(
+            Call {
+                fun: box callee,
+                args,
+                span: self.spanned(start),
+            }))
     }
 
-    fn apply(&mut self, expr: Expr) -> Result<Expr> {
-        let span = expr.span();
-
-        let args = self.args()?;
-
-        if args.is_empty() {
-            Ok(expr)
-        } else {
-            Ok(Expr::Apply(Apply { fun: box expr, args, span: self.complete(span) }))
-        }
-    }
-
-    fn template(&mut self) -> Result<Expr> {
+    fn parse_template(&mut self) -> Result<Expr> {
         let start = self.span();
 
         let mut elements = vec![];
 
         loop {
             match self.token.kind {
-                TokenKind::StringEnd => {
-                    elements.push(self.string(self.token.kind)?);
+                TokenKind::Template(TemplateKind::StringEnd) => {
+                    elements.push(self.parse_string(self.token.kind)?);
                     break;
                 }
-                TokenKind::StringStart
-              | TokenKind::StringFragment => {
-                    elements.push(self.string(self.token.kind)?);
+                TokenKind::Template(TemplateKind::StringStart)
+              | TokenKind::Template(TemplateKind::StringFragment) => {
+                    elements.push(self.parse_string(self.token.kind)?);
                 }
-                TokenKind::OpeningBrace => {
-                    self.eat(TokenKind::OpeningBrace)?;
-                    elements.push(self.expr()?);
-                    self.eat(TokenKind::ClosingBrace)?;
+                TokenKind::Symbol(SymbolKind::OpeningBrace) => {
+                    self.eat(TokenKind::Symbol(SymbolKind::OpeningBrace))?;
+                    elements.push(self.parse_expr()?);
+                    self.eat(TokenKind::Symbol(SymbolKind::ClosingBrace))?;
                 }
                 _ => { break; }
             }
@@ -268,107 +353,159 @@ impl<'s> Parser<'s> {
             .into_iter()
             .filter(|part| {
                 match part {
-                    Expr::String(ref s) if s.value.is_empty() => {
-                        false
-                    }
-                    _ => true
+                    Expr::String(ref s) => !s.value.is_empty(), _ => true
                 }
             })
             .collect();
 
-        Ok(Expr::Template(Template { elements, span: self.complete(start) }))
+        Ok(Expr::Template(
+            Template {
+                elements,
+                span: self.spanned(start),
+            }))
     }
 
-    fn string(&mut self, kind: TokenKind) -> Result<Expr> {
-        let Token { span, .. } = self.eat(kind)?;
+    fn parse_string(&mut self, kind: TokenKind) -> Result<Expr> {
+        let span = self.span();
 
+        self.eat(kind)?;
         let raw = self.source.content[span.range()].to_string();
 
         let value = match kind {
-            TokenKind::String => {
+            TokenKind::Literal(LiteralKind::String) => {
                 raw[1 .. raw.len() - 1].to_string()
             }
-            TokenKind::StringStart => {
+            TokenKind::Template(TemplateKind::StringStart) => {
                 raw[1 ..].to_string()
             }
-            TokenKind::StringEnd => {
+            TokenKind::Template(TemplateKind::StringEnd) => {
                 raw[.. raw.len() - 1].to_string()
             }
             _ => raw
         };
 
-        Ok(Expr::String(Literal { value, span }))
+        Ok(Expr::String(
+            Literal {
+                value,
+                span: self.spanned(span),
+            }))
     }
 
-    fn number(&mut self) -> Result<Expr> {
-        let span = self.token.span;
-        self.eat(TokenKind::Number)?;
-        let value = self.source.content[span.range()].to_string();
+    fn parse_number(&mut self) -> Result<Expr> {
+        let span = self.span();
 
-        Ok(Expr::Number(Literal { value, span }))
+        self.eat(TokenKind::Literal(LiteralKind::Number))?;
+        let value = self.source.content[span.range()].into();
+
+        Ok(Expr::Number(
+            Literal {
+                value,
+                span: self.spanned(span),
+            }))
     }
 
-    fn list(&mut self) -> Result<Expr> {
+    fn parse_list(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let items = self.block_of(
-            TokenKind::OpeningBracket,
-            TokenKind::ClosingBracket,
-            Self::expr)?;
+        let (items, rest) = self.parse_items_and_rest(
+            TokenKind::Symbol(SymbolKind::OpeningBracket),
+            TokenKind::Symbol(SymbolKind::ClosingBracket),
+            Self::parse_expr)?;
 
-        Ok(Expr::List(List { items, span: self.complete(start) }))
+        Ok(Expr::List(
+            List {
+                items,
+                rest,
+                span: self.spanned(start),
+            }))
     }
 
-    fn parens(&mut self) -> Result<Expr> {
+    fn parse_paren(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let mut items = self.block_of(
-            TokenKind::OpeningParen,
-            TokenKind::ClosingParen,
-            Self::expr)?;
+        let (items, rest) = self.parse_items_and_rest(
+            TokenKind::Symbol(SymbolKind::OpeningParen),
+            TokenKind::Symbol(SymbolKind::ClosingParen),
+            Self::parse_expr)?;
 
-        if items.is_empty() {
-            Ok(Expr::Unit(self.complete(start)))
-        } else if items.len() == 1 {
-            Ok(items.pop().unwrap())
-        } else {
-            Ok(Expr::Tuple(Tuple { items, span: self.complete(start) }))
+        // if is defining a function
+        if self.token_is(TokenKind::Symbol(SymbolKind::FArrow)) {
+            return self.expr_to_param(items).and_then(|params| self.parse_fn(params));
         }
+
+        let span = self.spanned(start);
+
+        let e = if items.is_empty() && rest.is_none() {
+            Expr::Unit(span)
+        } else if items.len() == 1 && rest.is_none() {
+            let inner = box items.into_iter().next().unwrap();
+            Expr::Group(
+                Group {
+                    inner,
+                    span: self.spanned(start),
+                })
+        } else {
+            Expr::Tuple(
+                Tuple {
+                    items,
+                    rest,
+                    span: self.spanned(start),
+                })
+        };
+
+        Ok(e)
     }
 
-    fn record(&mut self) -> Result<Expr> {
+    fn expr_to_param(&self, items: Vec<Expr>) -> Result<Vec<Name>> {
+        return items
+            .into_iter()
+            .map(|item| {
+                if let Expr::Name(name) = item {
+                    Ok(name)
+                } else {
+                    Err(NitrineError::error(
+                        item.span(),
+                        format!("`{}` is not a valid function parameter", item.display_name())))
+                }
+            })
+            .collect::<Result<Vec<_>>>()
+    }
+
+    fn parse_record(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let properties = self.block_of(
-            TokenKind::OpeningBrace,
-            TokenKind::ClosingBrace,
-            Self::property)?;
-
-        Ok(Expr::Record(Record { properties, span: self.complete(start) }))
+        let (items, rest) = self.parse_items_and_rest(
+            TokenKind::Symbol(SymbolKind::OpeningBrace),
+            TokenKind::Symbol(SymbolKind::ClosingBrace),
+            Self::parse_property)?;
+        
+        Ok(Expr::Record(
+            Record {
+                items,
+                rest,
+                span: self.spanned(start),
+            }))
     }
 
-    fn property(&mut self) -> Result<(Name, Expr)> {
-        let key = self.name()?;
+    fn parse_property(&mut self) -> Result<(Name, Expr)> {
+        let key = self.parse_name()?;
 
-        if !self.matches(TokenKind::Comma)
-        && !self.matches(TokenKind::ClosingBrace)
+        if !self.token_is(TokenKind::Symbol(SymbolKind::Comma))
+        && !self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace))
         && !self.match_lines()
         {
             return Err(NitrineError::error(
                 self.span(),
-                "The property name and value must start in the same line".into()));
+                "The `name` and `value` of the property must start at the same line".into()));
         }
 
         let val = match self.token.kind {
-            TokenKind::Equals => {
+            TokenKind::Symbol(SymbolKind::Equals) => {
                 self.bump();
-                self.expr()?
+                self.parse_expr()?
             }
-            TokenKind::OpeningBrace => {
-                self.expr()?
-            }
-            TokenKind::OpeningParen => {
-                self.function()?
+            TokenKind::Symbol(SymbolKind::OpeningBrace) => {
+                self.parse_record()?
             }
             _ => Expr::Name(key.clone())
         };
@@ -376,165 +513,271 @@ impl<'s> Parser<'s> {
         Ok((key, val))
     }
 
-    fn unary(&mut self) -> Result<Expr> {
-        let Token { kind, span } = self.token;
+    fn parse_items_and_rest<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F) 
+    -> Result<(Vec<T>, Option<Box<Expr>>)>
+    where
+        F: FnMut(&mut Self) -> Result<T>,
+    {
+        let mut items = vec![];
+        let mut rest  = None;
 
-        let operator = self.operator(kind, span)?;
+        self.eat(open)?;
 
-        if self.prev.kind == TokenKind::OpeningParen
-        && self.peek.kind == TokenKind::ClosingParen {
+        loop {
+            if self.token_is(close) {
+                break;
+            }
+
+            items.push(f(self)?);
+
+            match self.token.kind {
+                TokenKind::Symbol(SymbolKind::Amp) => {
+                    self.bump();
+                    rest = Some(box self.parse_expr()?);
+                    break;
+                }
+                TokenKind::Symbol(SymbolKind::Comma) => {
+                    self.bump();
+                }
+                _ => { break; }
+            }
+        }
+
+        self.eat(close)?;
+
+        Ok((items, rest))
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr> {
+
+        let (kind, span) = if let Token { kind: TokenKind::Operator(kind), span } = self.token {
+            (kind, span)
+        } else {
+            return Err(NitrineError::error(
+                self.token.span,
+                format!("{} is not a operator", self.token.kind)))
+        };
+
+        let operator = self.operator(kind);
+
+        if self.prev.kind == TokenKind::Symbol(SymbolKind::OpeningParen)
+        && self.peek.kind == TokenKind::Symbol(SymbolKind::ClosingParen) {
             self.bump();
-            return Ok(Expr::Name(Name { value: format!("{}", operator).to_lowercase(), span }));
+
+            return Ok(Expr::Partial(
+                Partial {
+                    op: operator,
+                    lhs: None,
+                    rhs: None,
+                    span: self.spanned(span),
+                }))
         }
 
         self.bump();
 
         if !self.match_lines() {
             return Err(NitrineError::error(
-                span,
-                "Unary (infix) or partial operators must be in the same line as the operand".into()))
+                self.token.span,
+                "Unary (infix) or partial operators must be in the same line as the operand".into()));
         }
 
-        let expr = box self.term(false)?;
-        Ok(Expr::Unary(Unary { op: operator, expr, span: self.complete(span) }))
+        let expr = box self.parse_term()?;
+
+        Ok(if kind.is_unary() {
+            Expr::Unary(
+                Unary {
+                    op: operator,
+                    rhs: expr,
+                    span: self.spanned(span),
+                })
+        } else {
+            Expr::Partial(
+                Partial {
+                    op: operator,
+                    rhs: Some(expr),
+                    lhs: None,
+                    span: self.spanned(span),
+                })
+        })
     }
 
-    fn binary(&mut self, minimum_precedence: u8) -> Result<Expr> {
-        let mut expr = self.term(true)?;
+    fn parse_binary(&mut self, expr: Option<Expr>, minimum: u8) -> Result<Expr> {
 
-        while let Some((precedence, associativity)) = self.token.kind.precedence() {
+        let mut expr = if let Some(expr) = expr {
+            expr
+        } else {
+            self.parse_term().and_then(|term| self.parse_apply(term))?
+        };
 
-            if precedence < minimum_precedence {
-                break;
+        while let TokenKind::Operator(operator) = self.token.kind {
+            if let Some((precedence, associativity)) = operator.precedence() {
+
+                if precedence < minimum {
+                    break;
+                }
+
+                let operator = self.operator(operator);
+                self.bump();
+
+                // partial application of operators
+                if self.token_is(TokenKind::Symbol(SymbolKind::ClosingParen)) {
+
+                    let span = self.spanned(expr.span());
+
+                    return Ok(Expr::Partial(
+                        Partial {
+                            op: operator,
+                            lhs: Some(box expr),
+                            rhs: None,
+                            span: self.spanned(span),
+                        }))
+                }
+
+                let weight = match associativity {
+                    Associativity::Right => 0,
+                    Associativity::Left  => 1,
+                    Associativity::None  => 1,
+                };
+
+                let rhs = box self.parse_binary(None, precedence + weight)?;
+                let lhs = box expr;
+
+                let span = lhs.span() + rhs.span();
+
+                expr = Expr::Binary(
+                    Binary {
+                        op: operator,
+                        lhs,
+                        rhs,
+                        span: self.spanned(span),
+                    });
             }
-
-            let Token { kind, span } = self.token;
-            self.bump();
-
-            let operator = self.operator(kind, span)?;
-
-            let fix = match associativity {
-                Associativity::Right => 0,
-                Associativity::Left  => 1,
-                Associativity::None  => 1,
-            };
-
-            let span = self.complete(expr.span());
-
-            let lexpr = box expr;
-            let rexpr = box self.binary(precedence + fix)?;
-
-            expr = Expr::Binary(Binary { op: operator, lexpr, rexpr, span });
         }
 
         Ok(expr)
     }
 
-    fn operator(&self, kind: TokenKind, span: Span) -> Result<Operator> {
-        let kind = match kind {
-            TokenKind::Add => OperatorKind::Add,
-          | TokenKind::Sub => OperatorKind::Sub,
-          | TokenKind::Mul => OperatorKind::Mul,
-          | TokenKind::Div => OperatorKind::Div,
-          | TokenKind::Rem => OperatorKind::Rem,
-          | TokenKind::Concat => OperatorKind::Concat,
-          | TokenKind::BitAnd => OperatorKind::BitAnd,
-          | TokenKind::BitOr  => OperatorKind::BitOr,
-          | TokenKind::BitNot => OperatorKind::BitNot,
-          | TokenKind::BitXor => OperatorKind::BitXor,
-          | TokenKind::BitShr => OperatorKind::BitShr,
-          | TokenKind::BitShl => OperatorKind::BitShl,
-          | TokenKind::And => OperatorKind::And,
-          | TokenKind::Or  => OperatorKind::Or,
-          | TokenKind::Not => OperatorKind::Not,
-          | TokenKind::Is  => OperatorKind::Is,
-          | TokenKind::Eq  => OperatorKind::Eq,
-          | TokenKind::Ne  => OperatorKind::Ne,
-          | TokenKind::Lt  => OperatorKind::Lt,
-          | TokenKind::Le  => OperatorKind::Le,
-          | TokenKind::Gt  => OperatorKind::Gt,
-          | TokenKind::Ge  => OperatorKind::Ge,
-          | TokenKind::Pipe => OperatorKind::Pipe,
-            _ => {
-                return Err(NitrineError::error(
-                    span,
-                    format!("Operator `{}` is not a valid binary (infix) operator", kind)));
-            }
-        };
-
-        Ok(Operator { kind, span })
+    fn operator(&self, kind: OperatorKind) -> Operator {
+        match kind {
+            OperatorKind::Add => Operator::Add,
+          | OperatorKind::Sub => Operator::Sub,
+          | OperatorKind::Mul => Operator::Mul,
+          | OperatorKind::Div => Operator::Div,
+          | OperatorKind::Rem => Operator::Rem,
+          | OperatorKind::And => Operator::And,
+          | OperatorKind::Or  => Operator::Or,
+          | OperatorKind::Is  => Operator::Is,
+          | OperatorKind::Not => Operator::Not,
+          | OperatorKind::Eq  => Operator::Eq,
+          | OperatorKind::Ne  => Operator::Ne,
+          | OperatorKind::Lt  => Operator::Lt,
+          | OperatorKind::Le  => Operator::Le,
+          | OperatorKind::Gt  => Operator::Gt,
+          | OperatorKind::Ge  => Operator::Ge,
+          | OperatorKind::Concat => Operator::Concat,
+          | OperatorKind::BitAnd => Operator::BitAnd,
+          | OperatorKind::BitOr  => Operator::BitOr,
+          | OperatorKind::BitNot => Operator::BitNot,
+          | OperatorKind::BitXor => Operator::BitXor,
+          | OperatorKind::BitShr => Operator::BitShr,
+          | OperatorKind::BitShl => Operator::BitShl,
+          | OperatorKind::LPipe  => Operator::LPipe,
+          | OperatorKind::RPipe  => Operator::RPipe,
+        }
     }
 
-    fn cond(&mut self) -> Result<Expr> {
-        let span = self.span();
-
-        self.eat(TokenKind::If)?;
-        let test = box self.expr()?;
-
-        self.eat(TokenKind::Then)?;
-        let then = box self.expr()?;
-
-        self.eat(TokenKind::Else)?;
-        let other = box self.expr()?;
-
-        Ok(Expr::If(If { test, then, other, span: self.complete(span) }))
-    }
-
-    fn lambda(&mut self) -> Result<Expr> {
+    fn parse_if(&mut self) -> Result<Expr> {
         let start = self.span();
 
-        let mut args = self.block_of(
-            TokenKind::Fn,
-            TokenKind::Arrow,
-            Self::expr)?;
+        self.eat(TokenKind::Keyword(KeywordKind::If))?;
+        let predicate = box self.parse_expr()?;
 
-        if args.is_empty() {
-            args.push(Expr::Unit(self.complete(start)));
-        }
+        self.eat(TokenKind::Keyword(KeywordKind::Then))?;
+        let positive = box self.parse_expr()?;
 
-        let value = box self.expr()?;
+        self.eat(TokenKind::Keyword(KeywordKind::Else))?;
+        let negative = box self.parse_expr()?;
 
-        Ok(Expr::Fun(Fun { args, value, span: self.complete(start) }))
+        Ok(Expr::If(
+            If {
+                predicate,
+                positive,
+                negative,
+                span: self.spanned(start),
+            }))
     }
 
-    fn block_of<T, F>(&mut self, open: TokenKind, close: TokenKind, mut f: F)
+    fn parse_match(&mut self) -> Result<Expr> {
+        let start = self.span();
+
+        self.eat(TokenKind::Keyword(KeywordKind::Match))?;
+
+        let predicate = box self.parse_expr()?;
+
+        let mut cases = vec![];
+        while self.maybe_eat(TokenKind::Keyword(KeywordKind::Case)) {
+            
+            let patt = self.parse_term()?;
+            self.eat(TokenKind::Symbol(SymbolKind::FArrow))?;
+            let value = self.parse_expr()?;
+
+            if !patt.is_pattern() {
+                return Err(NitrineError::error(
+                    patt.span(),
+                    format!("`{}` is not a valid pattern", patt.display_name())));
+            }
+
+            cases.push((patt, value));
+
+            if self.token_is(TokenKind::Symbol(SymbolKind::ClosingBrace)) {
+                break;
+            }
+        }
+
+        if self.maybe_eat(TokenKind::Keyword(KeywordKind::Else)) {
+            let span = self.span();
+
+            let value = if self.token_is(TokenKind::Symbol(SymbolKind::OpeningBrace)) {
+                self.parse_block()?
+            } else {
+                self.parse_expr()?
+            };
+
+            cases.push((Expr::Any(span), value));
+        }
+
+        Ok(Expr::Match(
+            Match {
+                predicate,
+                cases,
+                span: self.spanned(start),
+            }))
+    }
+
+    fn parse_while<T, F, P>(&mut self, mut collect: F, predicate: P)
         -> Result<Vec<T>>
     where
-        F: FnMut(&mut Self) -> Result<T>,
+        F: FnMut(&mut Self) -> Result<T>, P: std::ops::Fn(&Self) -> bool
     {
         let mut result = vec![];
 
-        self.eat(open)?;
-
-        loop {
-            if self.matches(close) {
-                break;
-            }
-
-            result.push(f(self)?);
-
-            if !self.maybe_eat(TokenKind::Comma) {
-                break;
-            }
+        while predicate(&self) {
+            result.push(collect(self)?);
         }
-
-        self.eat(close)?;
 
         Ok(result)
     }
 
-    fn complete(&self, start: Span) -> Span {
-        start.to(self.prev.span)
-    }
-
-    fn bump(&mut self) {
+    fn bump(&mut self) -> Span {
         self.prev  = self.token;
         self.token = self.peek;
         self.peek  = if let Some(token) = self.lexer.next() {
             token
         } else {
             Token::default()
-        }
+        };
+
+        self.prev.span
     }
 
     fn done(&self) -> bool {
@@ -563,12 +806,16 @@ impl<'s> Parser<'s> {
         }
     }
 
-    fn matches(&self, kind: TokenKind) -> bool {
+    fn token_is(&self, kind: TokenKind) -> bool {
         self.token.kind == kind
     }
 
     fn span(&self) -> Span {
         self.token.span
+    }
+
+    fn spanned(&self, start: Span) -> Span {
+        start + self.prev.span
     }
 
     fn match_lines(&self) -> bool {
@@ -579,34 +826,18 @@ impl<'s> Parser<'s> {
         let Token { kind, span } = self.token;
 
         let msg = match kind {
-            TokenKind::Error(TokenKindError::InvalidCharacter)
-          | TokenKind::Error(TokenKindError::InvalidEscape)
-          | TokenKind::Error(TokenKindError::InvalidOperator)
-          | TokenKind::Error(TokenKindError::UnterminatedString) => {
+            TokenKind::Error(_) => {
                 format!("{}", kind)
             }
-            _ => format!("Unexpected `{}`", kind)
+            _ => {
+                format!("Unexpected `{}`", kind)
+            }
         };
 
         NitrineError::error(span, msg)
     }
 }
 
-pub fn parse<'s>(source: &'s Source) -> Result<Module> {
-    let mut parser = Parser::new(source);
-
-    let mut definitions = vec![];
-
-    while !parser.done() {
-        definitions.push(parser.definition()?);
-    }
-
-    let name = source.path
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-
-    Ok(Module { name, definitions })
+pub fn parse(source: &Source) -> Result<Module> {
+    Parser::new(source).parse_module()
 }
